@@ -1,6 +1,12 @@
 import type { Layer } from './layer';
 import type { CanvasState } from './canvas';
 
+export interface ExportSettings {
+  format: 'png' | 'jpeg' | 'webp';
+  quality: number;
+  filename: string;
+}
+
 export interface GeneratedDesign {
   id: string;
   name: string;
@@ -13,6 +19,7 @@ export interface GeneratedDesign {
   note?: string;
   selectedLayerId: string | null;
   parentId?: string;
+  exportSettings: ExportSettings;
   createdAt: number;
   updatedAt: number;
 }

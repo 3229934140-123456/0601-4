@@ -54,6 +54,8 @@ interface ExportResult {
   success: boolean;
   size?: string;
   error?: string;
+  format?: string;
+  filename?: string;
 }
 
 export const GenerationCenter: React.FC = () => {
@@ -179,17 +181,18 @@ export const GenerationCenter: React.FC = () => {
     if (!selectedDesign) return;
     setIsExporting(true);
     try {
+      const { format, quality, filename } = selectedDesign.exportSettings;
       const dataUrl = await exportToDataUrl(
         selectedDesign.layers,
         selectedDesign.width,
         selectedDesign.height,
         selectedDesign.backgroundColor,
-        globalFormat,
-        globalQuality
+        format,
+        quality
       );
-      const ext = globalFormat === 'jpeg' ? 'jpg' : globalFormat;
-      const filename = `${selectedDesign.name.replace(/\s+/g, '_')}.${ext}`;
-      downloadImage(dataUrl, filename);
+      const ext = format === 'jpeg' ? 'jpg' : format;
+      const finalFilename = filename.endsWith(`.${ext}`) ? filename : `${filename}.${ext}`;
+      downloadImage(dataUrl, finalFilename);
     } catch (error) {
       console.error('Export failed:', error);
       alert('导出失败，请重试');
@@ -210,23 +213,27 @@ export const GenerationCenter: React.FC = () => {
       const design = generatedDesigns.find((d) => d.id === designId);
       if (!design) continue;
 
+      const { format, quality, filename } = design.exportSettings;
+      const ext = format === 'jpeg' ? 'jpg' : format;
+      const finalFilename = filename.endsWith(`.${ext}`) ? filename : `${filename}.${ext}`;
+
       try {
         const dataUrl = await exportToDataUrl(
           design.layers,
           design.width,
           design.height,
           design.backgroundColor,
-          globalFormat,
-          globalQuality
+          format,
+          quality
         );
-        const ext = globalFormat === 'jpeg' ? 'jpg' : globalFormat;
-        const filename = `${design.name.replace(/\s+/g, '_')}.${ext}`;
-        downloadImage(dataUrl, filename);
+        downloadImage(dataUrl, finalFilename);
         results.push({
           designId: design.id,
           name: design.name,
           success: true,
           size: `${design.width} × ${design.height}`,
+          format: format.toUpperCase(),
+          filename: finalFilename,
         });
       } catch (error) {
         results.push({
@@ -234,6 +241,8 @@ export const GenerationCenter: React.FC = () => {
           name: design.name,
           success: false,
           error: error instanceof Error ? error.message : '导出失败',
+          format: format.toUpperCase(),
+          filename: finalFilename,
         });
       }
 
@@ -481,8 +490,8 @@ export const GenerationCenter: React.FC = () => {
 
                 {showBatchSettings && (
                   <div className="p-3 border-b border-surface-700 bg-surface-800/50">
-                    <p className="text-[11px] font-medium text-surface-400 mb-2">批量导出设置</p>
-                    <div className="flex items-center gap-4">
+                    <p className="text-[11px] font-medium text-surface-400 mb-2">批量应用导出设置到选中项</p>
+                    <div className="flex items-center gap-3">
                       <div className="flex items-center gap-2">
                         <label className="text-[11px] text-surface-500">格式:</label>
                         <select
@@ -505,11 +514,33 @@ export const GenerationCenter: React.FC = () => {
                             step="0.1"
                             value={globalQuality}
                             onChange={(e) => setGlobalQuality(Number(e.target.value))}
-                            className="w-24"
+                            className="w-20"
                           />
                         </div>
                       )}
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          selectedDesignIds.forEach((id) => {
+                            updateGeneratedDesign(id, {
+                              exportSettings: {
+                                ...(generatedDesigns.find((d) => d.id === id)?.exportSettings || { format: 'png' as const, quality: 0.9, filename: '' }),
+                                format: globalFormat,
+                                quality: globalQuality,
+                              },
+                            });
+                          });
+                        }}
+                        disabled={selectedDesignIds.length === 0}
+                        className="text-[10px] py-1 px-2"
+                      >
+                        应用到 {selectedDesignIds.length} 个
+                      </Button>
                     </div>
+                    <p className="text-[10px] text-surface-500 mt-2">
+                      提示：每个版本都有独立的导出设置，也可以在右侧详情面板单独修改
+                    </p>
                   </div>
                 )}
 
@@ -878,12 +909,36 @@ export const GenerationCenter: React.FC = () => {
                     <div className="p-3 space-y-3">
                       <p className="text-[11px] font-medium text-surface-400">导出设置</p>
                       
-                      <div className="space-y-2">
+                      <div className="space-y-2.5">
+                        <div>
+                          <label className="text-[10px] text-surface-500 block mb-1">文件名</label>
+                          <input
+                            type="text"
+                            value={selectedDesign.exportSettings.filename}
+                            onChange={(e) =>
+                              updateGeneratedDesign(selectedDesign.id, {
+                                exportSettings: {
+                                  ...selectedDesign.exportSettings,
+                                  filename: e.target.value,
+                                },
+                              })
+                            }
+                            className="w-full px-2 py-1.5 text-xs bg-surface-800 border border-surface-700 rounded text-surface-200 focus:outline-none focus:border-brand-500 font-mono"
+                          />
+                        </div>
+
                         <div>
                           <label className="text-[10px] text-surface-500 block mb-1">格式</label>
                           <select
-                            value={globalFormat}
-                            onChange={(e) => setGlobalFormat(e.target.value as any)}
+                            value={selectedDesign.exportSettings.format}
+                            onChange={(e) =>
+                              updateGeneratedDesign(selectedDesign.id, {
+                                exportSettings: {
+                                  ...selectedDesign.exportSettings,
+                                  format: e.target.value as 'png' | 'jpeg' | 'webp',
+                                },
+                              })
+                            }
                             className="w-full px-2 py-1.5 text-xs bg-surface-800 border border-surface-700 rounded text-surface-200 focus:outline-none focus:border-brand-500"
                           >
                             <option value="png">PNG - 无损，支持透明</option>
@@ -892,32 +947,47 @@ export const GenerationCenter: React.FC = () => {
                           </select>
                         </div>
 
-                        {globalFormat !== 'png' && (
+                        {selectedDesign.exportSettings.format !== 'png' && (
                           <div>
                             <label className="text-[10px] text-surface-500 block mb-1">
-                              质量: {Math.round(globalQuality * 100)}%
+                              质量: {Math.round(selectedDesign.exportSettings.quality * 100)}%
                             </label>
                             <input
                               type="range"
                               min="0.1"
                               max="1"
                               step="0.05"
-                              value={globalQuality}
-                              onChange={(e) => setGlobalQuality(Number(e.target.value))}
+                              value={selectedDesign.exportSettings.quality}
+                              onChange={(e) =>
+                                updateGeneratedDesign(selectedDesign.id, {
+                                  exportSettings: {
+                                    ...selectedDesign.exportSettings,
+                                    quality: Number(e.target.value),
+                                  },
+                                })
+                              }
                               className="w-full"
                             />
                           </div>
                         )}
 
-                        <div className="bg-surface-800 rounded p-2 text-[11px] text-surface-400">
-                          <p>预计尺寸: {selectedDesign.width} × {selectedDesign.height} px</p>
-                          <p className="mt-1">
-                            文件大小约: {estimateFileSize(
+                        <div className="bg-surface-800 rounded p-2.5 text-[11px] text-surface-400 space-y-1">
+                          <p className="flex justify-between">
+                            <span className="text-surface-500">尺寸</span>
+                            <span className="font-mono text-surface-300">{selectedDesign.width} × {selectedDesign.height} px</span>
+                          </p>
+                          <p className="flex justify-between">
+                            <span className="text-surface-500">格式</span>
+                            <span className="text-surface-300">{selectedDesign.exportSettings.format.toUpperCase()}</span>
+                          </p>
+                          <p className="flex justify-between">
+                            <span className="text-surface-500">文件大小</span>
+                            <span className="text-surface-300">约 {estimateFileSize(
                               selectedDesign.width,
                               selectedDesign.height,
-                              globalFormat,
-                              globalQuality
-                            )}
+                              selectedDesign.exportSettings.format,
+                              selectedDesign.exportSettings.quality
+                            )}</span>
                           </p>
                         </div>
                       </div>
@@ -934,7 +1004,7 @@ export const GenerationCenter: React.FC = () => {
                           {isExporting ? '导出中...' : '导出此设计'}
                         </Button>
                         <p className="text-[10px] text-surface-500 text-center">
-                          导出 {selectedDesign.width} × {selectedDesign.height} 的 {globalFormat.toUpperCase()} 图片
+                          导出 {selectedDesign.width} × {selectedDesign.height} 的 {selectedDesign.exportSettings.format.toUpperCase()} 图片
                         </p>
                       </div>
                     </div>
@@ -1267,25 +1337,30 @@ const ExportResultsView: React.FC<ExportResultsViewProps> = ({ results, isExport
                 : 'bg-accent-coral/10 border-accent-coral/30'
             }`}
           >
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 min-w-0 flex-1">
               {result.success ? (
-                <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
                   <Check size={14} className="text-emerald-400" />
                 </div>
               ) : (
-                <div className="w-8 h-8 rounded-full bg-accent-coral/20 flex items-center justify-center">
+                <div className="w-8 h-8 rounded-full bg-accent-coral/20 flex items-center justify-center flex-shrink-0">
                   <X size={14} className="text-accent-coral" />
                 </div>
               )}
-              <div>
-                <p className="text-sm font-medium text-surface-200">{result.name}</p>
-                <p className="text-xs text-surface-500">
-                  {result.success ? result.size : result.error}
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-surface-200 truncate">{result.name}</p>
+                <p className="text-xs text-surface-500 font-mono truncate">
+                  {result.filename}
+                </p>
+                <p className="text-[10px] text-surface-500">
+                  {result.success
+                    ? `${result.size} · ${result.format}`
+                    : result.error}
                 </p>
               </div>
             </div>
             {result.success && (
-              <span className="text-[10px] text-emerald-400 font-medium">已下载</span>
+              <span className="text-[10px] text-emerald-400 font-medium flex-shrink-0">已下载</span>
             )}
           </div>
         ))}

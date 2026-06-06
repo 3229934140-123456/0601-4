@@ -478,7 +478,7 @@ export const ProjectDrawer: React.FC = () => {
         </div>
 
         {currentProjectId && (
-          <div className="p-3 border-b border-surface-700 space-y-2">
+          <div className="p-3 border-b border-surface-700 space-y-2.5">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-surface-400 uppercase tracking-wider flex items-center gap-1.5">
                 <Clock size={12} />
@@ -493,31 +493,123 @@ export const ProjectDrawer: React.FC = () => {
             </div>
             
             {currentProject && (
-              <div className="p-2 bg-surface-800 rounded-md">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-surface-200 truncate flex-1">
-                    {currentProject.name}
-                  </span>
-                  {currentProject.starred && (
-                    <Star size={12} className="text-amber-400 fill-amber-400 flex-shrink-0" />
-                  )}
-                </div>
-                {currentProject.tags && currentProject.tags.length > 0 && (
-                  <div className="flex gap-1 mt-2 flex-wrap">
-                    {currentProject.tags.slice(0, 3).map((tag) => (
-                      <span
-                        key={tag}
-                        className="px-1.5 py-0.5 text-[10px] bg-surface-700 text-surface-400 rounded flex items-center gap-1"
-                      >
-                        <Tag size={8} />
-                        {tag}
-                      </span>
-                    ))}
+              <div className="space-y-2.5">
+                <div className="p-2 bg-surface-800 rounded-md">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-surface-200 truncate flex-1">
+                      {currentProject.name}
+                    </span>
+                    {currentProject.starred && (
+                      <Star size={12} className="text-amber-400 fill-amber-400 flex-shrink-0" />
+                    )}
                   </div>
-                )}
+                  <p className="text-[10px] text-surface-500 mt-0.5 font-mono">
+                    {currentProject.canvas.width} × {currentProject.canvas.height}
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-medium text-surface-400 flex items-center gap-1">
+                      <Tag size={10} />
+                      标签
+                    </label>
+                    <button
+                      onClick={() => {
+                        const tag = prompt('输入标签名:');
+                        if (tag && tag.trim() && currentProjectId) {
+                          const project = projects.find((p) => p.id === currentProjectId);
+                          if (project && !project.tags?.includes(tag.trim())) {
+                            setProjectTags(currentProjectId, [...(project.tags || []), tag.trim()]);
+                          }
+                        }
+                      }}
+                      className="text-[10px] text-brand-400 hover:text-brand-300"
+                    >
+                      + 添加
+                    </button>
+                  </div>
+                  <div className="flex gap-1 flex-wrap min-h-[22px]">
+                    {currentProject.tags && currentProject.tags.length > 0 ? (
+                      currentProject.tags.map((tag) => (
+                        <span
+                          key={tag}
+                          className="group px-1.5 py-0.5 text-[10px] bg-surface-700 text-surface-300 rounded flex items-center gap-1"
+                        >
+                          <Tag size={8} />
+                          {tag}
+                          <button
+                            onClick={() => {
+                              if (currentProjectId) {
+                                const project = projects.find((p) => p.id === currentProjectId);
+                                if (project) {
+                                  setProjectTags(currentProjectId, project.tags?.filter((t) => t !== tag) || []);
+                                }
+                              }
+                            }}
+                            className="opacity-0 group-hover:opacity-100 ml-0.5 text-surface-500 hover:text-accent-coral transition-opacity"
+                            title="删除标签"
+                          >
+                            <X size={9} />
+                          </button>
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-[10px] text-surface-600">暂无标签，点击添加</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-medium text-surface-400 flex items-center gap-1">
+                      <Folder size={10} />
+                      文件夹
+                    </label>
+                    {currentProject.folder && (
+                      <button
+                        onClick={() => {
+                          if (currentProjectId) {
+                            setProjectFolder(currentProjectId, undefined);
+                          }
+                        }}
+                        className="text-[10px] text-surface-500 hover:text-accent-coral"
+                      >
+                        清除
+                      </button>
+                    )}
+                  </div>
+                  <select
+                    value={currentProject.folder || ''}
+                    onChange={(e) => {
+                      if (currentProjectId) {
+                        setProjectFolder(currentProjectId, e.target.value || undefined);
+                      }
+                    }}
+                    className="w-full px-2 py-1 text-[11px] bg-surface-800 border border-surface-700 rounded text-surface-300 focus:outline-none focus:border-brand-500"
+                  >
+                    <option value="">未分类</option>
+                    {allFolders.map((folder) => (
+                      <option key={folder} value={folder}>
+                        {folder}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => {
+                      const folder = prompt('输入新文件夹名:');
+                      if (folder && folder.trim() && currentProjectId) {
+                        setProjectFolder(currentProjectId, folder.trim());
+                      }
+                    }}
+                    className="text-[10px] text-brand-400 hover:text-brand-300"
+                  >
+                    + 新建文件夹
+                  </button>
+                </div>
                 
                 {showSaveRecords && currentProject.saveRecords && currentProject.saveRecords.length > 0 && (
-                  <div className="mt-2 pt-2 border-t border-surface-700 space-y-1">
+                  <div className="pt-2 border-t border-surface-700 space-y-1">
                     <p className="text-[10px] text-surface-500">最近保存：</p>
                     {currentProject.saveRecords.slice(-5).reverse().map((record) => (
                       <div

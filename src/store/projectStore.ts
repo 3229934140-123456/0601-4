@@ -108,10 +108,24 @@ function scaleLayersForSize(
 const STORAGE_KEY = 'design-studio-projects';
 const FAVORITES_KEY = 'design-studio-favorites';
 
-function loadFromStorage() {
+function loadFromStorage(): Project[] {
   try {
     const data = localStorage.getItem(STORAGE_KEY);
-    return data ? JSON.parse(data) : [];
+    if (!data) return [];
+    const projects = JSON.parse(data) as any[];
+    return projects.map((p) => ({
+      ...p,
+      tags: p.tags || [],
+      saveRecords: p.saveRecords || [],
+      generatedDesigns: (p.generatedDesigns || []).map((d: any) => ({
+        ...d,
+        exportSettings: d.exportSettings || {
+          format: 'png' as const,
+          quality: 0.9,
+          filename: d.name?.replace(/\s+/g, '_') || 'design',
+        },
+      })),
+    }));
   } catch {
     return [];
   }
@@ -232,6 +246,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       generatedDesigns: [],
       selectedDesignIds: [],
       isDirty: false,
+      savedLayers: [],
+      savedCanvas: JSON.parse(JSON.stringify(newProject.canvas)),
     });
     return newProject.id;
   },
@@ -281,6 +297,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       generatedDesigns: [],
       selectedDesignIds: [],
       isDirty: false,
+      savedLayers: JSON.parse(JSON.stringify(layers)),
+      savedCanvas: JSON.parse(JSON.stringify(newProject.canvas)),
     });
     return newProject.id;
   },
@@ -320,8 +338,23 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const { projects } = get();
     const project = projects.find((p) => p.id === id);
     if (project) {
+      const designs = (project.generatedDesigns || []).map((d) => ({
+        ...d,
+        exportSettings: d.exportSettings || {
+          format: 'png' as const,
+          quality: 0.9,
+          filename: d.name.replace(/\s+/g, '_'),
+        },
+      }));
+
+      const projectWithDefaults = {
+        ...project,
+        tags: project.tags || [],
+        saveRecords: project.saveRecords || [],
+      };
+
       const updatedProjects = projects.map((p) =>
-        p.id === id ? { ...p, lastOpenedAt: Date.now() } : p
+        p.id === id ? { ...projectWithDefaults, lastOpenedAt: Date.now() } : p
       );
       saveToStorage(updatedProjects);
       set({
@@ -329,11 +362,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         versionSnapshots: [],
         projects: updatedProjects,
         isDirty: false,
-        generatedDesigns: project.generatedDesigns || [],
+        generatedDesigns: designs,
         selectedDesignIds: [],
-        selectedGeneratedDesignId: (project.generatedDesigns || []).length > 0
-          ? project.generatedDesigns![0].id
-          : null,
+        selectedGeneratedDesignId: designs.length > 0 ? designs[0].id : null,
+        savedLayers: JSON.parse(JSON.stringify(project.layers)),
+        savedCanvas: JSON.parse(JSON.stringify(project.canvas)),
       });
     }
   },
@@ -552,6 +585,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         backgroundColor: canvasState.backgroundColor,
         layers: scaledLayers,
         selectedLayerId: null,
+        exportSettings: {
+          format: 'png' as const,
+          quality: 0.9,
+          filename: size.name.replace(/\s+/g, '_'),
+        },
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
@@ -667,6 +705,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       layers: JSON.parse(JSON.stringify(design.layers)),
       selectedLayerId: null,
       parentId: design.id,
+      exportSettings: {
+        ...design.exportSettings,
+        filename: `${design.exportSettings.filename}_副本`,
+      },
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
