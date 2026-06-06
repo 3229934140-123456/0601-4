@@ -1,10 +1,11 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Toolbar } from '@/components/panels/Toolbar/Toolbar';
 import { LeftPanel } from '@/components/panels/LeftPanel/LeftPanel';
 import { RightPanel } from '@/components/panels/RightPanel/RightPanel';
 import { Canvas } from '@/components/canvas/Canvas';
 import { ExportModal } from '@/components/modals/ExportModal';
 import { ProjectDrawer } from '@/components/modals/ProjectDrawer';
+import { GenerationCenter } from '@/components/modals/GenerationCenter';
 import { useCanvasStore } from '@/store/canvasStore';
 import { useLayerStore } from '@/store/layerStore';
 import { useProjectStore } from '@/store/projectStore';
@@ -12,7 +13,28 @@ import { useProjectStore } from '@/store/projectStore';
 export const Editor: React.FC = () => {
   const canvasState = useCanvasStore();
   const layerState = useLayerStore();
-  const { saveSnapshot } = useProjectStore();
+  const { saveSnapshot, setIsDirty, currentProjectId } = useProjectStore();
+
+  const prevLayersRef = useRef(layerState.layers);
+  const prevCanvasRef = useRef({ width: canvasState.width, height: canvasState.height, backgroundColor: canvasState.backgroundColor });
+
+  useEffect(() => {
+    const layersChanged = JSON.stringify(prevLayersRef.current) !== JSON.stringify(layerState.layers);
+    const canvasChanged =
+      prevCanvasRef.current.width !== canvasState.width ||
+      prevCanvasRef.current.height !== canvasState.height ||
+      prevCanvasRef.current.backgroundColor !== canvasState.backgroundColor;
+
+    if (layersChanged || canvasChanged) {
+      setIsDirty(true);
+      prevLayersRef.current = layerState.layers;
+      prevCanvasRef.current = {
+        width: canvasState.width,
+        height: canvasState.height,
+        backgroundColor: canvasState.backgroundColor,
+      };
+    }
+  }, [layerState.layers, canvasState.width, canvasState.height, canvasState.backgroundColor, setIsDirty]);
 
   useEffect(() => {
     (window as any).__canvasState = canvasState;
@@ -100,6 +122,7 @@ export const Editor: React.FC = () => {
 
       <ExportModal />
       <ProjectDrawer />
+      <GenerationCenter />
     </div>
   );
 };

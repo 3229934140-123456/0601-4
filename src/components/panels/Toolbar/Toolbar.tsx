@@ -9,6 +9,7 @@ import {
   Sparkles,
   ChevronDown,
   Maximize2,
+  Layers,
 } from 'lucide-react';
 import { useLayerStore } from '@/store/layerStore';
 import { useCanvasStore } from '@/store/canvasStore';
@@ -20,9 +21,19 @@ import { Button } from '@/components/common/Button';
 export const Toolbar: React.FC = () => {
   const { undo, redo, historyIndex, history } = useLayerStore();
   const { width, height, setSize } = useCanvasStore();
-  const { setShowExportModal, setShowProjectPanel, saveProject, saveSnapshot } =
-    useProjectStore();
+  const {
+    setShowExportModal,
+    setShowProjectPanel,
+    saveProject,
+    saveSnapshot,
+    setShowGenerationCenter,
+    getCurrentProject,
+    isDirty,
+    currentProjectId,
+  } = useProjectStore();
   const [showSizeMenu, setShowSizeMenu] = useState(false);
+
+  const currentProject = getCurrentProject();
 
   const socialSizes = canvasSizes.filter((s) => s.category === 'social');
   const posterSizes = canvasSizes.filter((s) => s.category === 'poster');
@@ -50,9 +61,23 @@ export const Toolbar: React.FC = () => {
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-brand-500 to-accent-cyan flex items-center justify-center">
             <Sparkles size={16} className="text-white" />
           </div>
-          <span className="text-sm font-bold font-display text-surface-100">
-            Design Studio
-          </span>
+          <div className="flex flex-col">
+            <span className="text-sm font-bold font-display text-surface-100 leading-tight">
+              Design Studio
+            </span>
+            {currentProject && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-surface-400 truncate max-w-[120px]">
+                  {currentProject.name}
+                </span>
+                {isDirty ? (
+                  <span className="w-1.5 h-1.5 rounded-full bg-accent-coral flex-shrink-0" title="未保存" />
+                ) : (
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 flex-shrink-0" title="已保存" />
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="w-px h-5 bg-surface-700 mx-2" />
@@ -146,6 +171,15 @@ export const Toolbar: React.FC = () => {
             </div>
           )}
         </div>
+
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<Sparkles size={14} />}
+          onClick={() => setShowGenerationCenter(true)}
+        >
+          多平台
+        </Button>
 
         <Button
           variant="primary"

@@ -1,9 +1,10 @@
 import { create } from 'zustand';
-import type { Project, VersionSnapshot, ColorPalette } from '@/types/project';
+import type { Project, VersionSnapshot, ColorPalette, GeneratedDesign } from '@/types/project';
 import type { Layer } from '@/types/layer';
 import type { CanvasState } from '@/types/canvas';
 import { colorPalettes, favoriteColors as defaultFavorites } from '@/data/colorPalettes';
 import { templates } from '@/data/templates';
+import { canvasSizes } from '@/data/canvasSizes';
 
 interface ProjectStore {
   currentProjectId: string | null;
@@ -13,9 +14,15 @@ interface ProjectStore {
   favoritePalettes: string[];
   showExportModal: boolean;
   showProjectPanel: boolean;
+  showGenerationCenter: boolean;
+  generatedDesigns: GeneratedDesign[];
+  selectedGeneratedDesignId: string | null;
+  isDirty: boolean;
 
   setShowExportModal: (show: boolean) => void;
   setShowProjectPanel: (show: boolean) => void;
+  setShowGenerationCenter: (show: boolean) => void;
+  setIsDirty: (dirty: boolean) => void;
 
   createNewProject: (name: string, width: number, height: number) => string;
   createProjectFromTemplate: (templateId: string) => string;
@@ -34,13 +41,51 @@ interface ProjectStore {
   removeFavoriteColor: (color: string) => void;
   toggleFavoritePalette: (paletteId: string) => void;
 
-  batchReplaceText: (find: string, replace: string) => void;
+  batchReplaceText: (find: string, replace: string) => number;
+  countMatchingTextLayers: (find: string) => number;
+
+  generateDesigns: (sizeIds: string[]) => void;
+  selectGeneratedDesign: (id: string | null) => void;
+  updateGeneratedDesign: (id: string, updates: Partial<GeneratedDesign>) => void;
+  deleteGeneratedDesign: (id: string) => void;
+  applyGeneratedDesignToCanvas: (id: string) => void;
+  saveGeneratedDesignAsSnapshot: (id: string, name: string) => void;
+  clearGeneratedDesigns: () => void;
 
   getCurrentProject: () => Project | null;
 }
 
 const generateId = () => `proj-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 const generateSnapshotId = () => `snap-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+const generateDesignId = () => `design-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+function scaleLayersForSize(
+  layers: Layer[],
+  originalW: number,
+  originalH: number,
+  targetW: number,
+  targetH: number
+): Layer[] {
+  const scaleX = targetW / originalW;
+  const scaleY = targetH / originalH;
+  const scale = Math.min(scaleX, scaleY);
+
+  const offsetX = (targetW - originalW * scale) / 2;
+  const offsetY = (targetH - originalH * scale) / 2;
+
+  return layers.map((layer) => ({
+    ...layer,
+    x: layer.x * scale + offsetX,
+    y: layer.y * scale + offsetY,
+    width: layer.width * scale,
+    height: layer.height * scale,
+    fontSize: layer.type === 'text' ? (layer as any).fontSize * scale : undefined,
+    stroke:
+      layer.type === 'shape' || layer.type === 'text'
+        ? { ...(layer as any).stroke, width: ((layer as any).stroke?.width || 0) * scale }
+        : undefined,
+  })) as Layer[];
+}
 
 const STORAGE_KEY = 'design-studio-projects';
 const FAVORITES_KEY = 'design-studio-favorites';
@@ -85,9 +130,15 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   favoritePalettes: initialFavorites.palettes,
   showExportModal: false,
   showProjectPanel: false,
+  showGenerationCenter: false,
+  generatedDesigns: [],
+  selectedGeneratedDesignId: null,
+  isDirty: false,
 
   setShowExportModal: (show) => set({ showExportModal: show }),
   setShowProjectPanel: (show) => set({ showProjectPanel: show }),
+  setShowGenerationCenter: (show) => set({ showGenerationCenter: show }),
+  setIsDirty: (dirty) => set({ isDirty: dirty }),
 
   createNewProject: (name, width, height) => {
     const { projects } = get();
@@ -113,7 +164,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     };
     const newProjects = [newProject, ...projects];
     saveToStorage(newProjects);
-    set({ projects: newProjects, currentProjectId: newProject.id, versionSnapshots: [] });
+    set({ projects: newProjects, currentProjectId: newProject.id, versionSnapshots: [], isDirty: false });
     return newProject.id;
   },
 
@@ -151,7 +202,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
     const newProjects = [newProject, ...projects];
     saveToStorage(newProjects);
-    set({ projects: newProjects, currentProjectId: newProject.id, versionSnapshots: [] });
+    set({ projects: newProjects, currentProjectId: newProject.id, versionSnapshots: [], isDirty: false });
     return newProject.id;
   },
 
@@ -174,14 +225,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     );
 
     saveToStorage(updatedProjects);
-    set({ projects: updatedProjects });
+    set({ projects: updatedProjects, isDirty: false });
   },
 
   loadProject: (id) => {
     const { projects } = get();
     const project = projects.find((p) => p.id === id);
     if (project) {
-      set({ currentProjectId: id, versionSnapshots: [] });
+      set({ currentProjectId: id, versionSnapshots: [], isDirty: false });
     }
   },
 
@@ -287,14 +338,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   batchReplaceText: (find, replace) => {
     const layersState = (window as any).__layersState as Layer[] | undefined;
-    if (!layersState || !find) return;
+    if (!layersState || !find) return 0;
 
+    let count = 0;
     const updatedLayers = layersState.map((layer) => {
       if (layer.type === 'text') {
-        return {
-          ...layer,
-          content: (layer as any).content.replace(new RegExp(find, 'g'), replace),
-        };
+        const textLayer = layer as any;
+        if (textLayer.content && textLayer.content.includes(find)) {
+          count++;
+          return {
+            ...layer,
+            content: textLayer.content.split(find).join(replace),
+          };
+        }
       }
       return layer;
     });
@@ -302,6 +358,125 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     if ((window as any).__setLayers) {
       (window as any).__setLayers(updatedLayers);
     }
+
+    return count;
+  },
+
+  countMatchingTextLayers: (find) => {
+    const layersState = (window as any).__layersState as Layer[] | undefined;
+    if (!layersState || !find) return 0;
+
+    let count = 0;
+    layersState.forEach((layer) => {
+      if (layer.type === 'text') {
+        const textLayer = layer as any;
+        if (textLayer.content && textLayer.content.includes(find)) {
+          count++;
+        }
+      }
+    });
+
+    return count;
+  },
+
+  generateDesigns: (sizeIds) => {
+    const canvasState = (window as any).__canvasState as CanvasState | undefined;
+    const layersState = (window as any).__layersState as Layer[] | undefined;
+    if (!canvasState || !layersState) return;
+
+    const newDesigns: GeneratedDesign[] = sizeIds.map((sizeId) => {
+      const size = canvasSizes.find((s) => s.id === sizeId);
+      if (!size) return null;
+
+      const scaledLayers = scaleLayersForSize(
+        layersState,
+        canvasState.width,
+        canvasState.height,
+        size.width,
+        size.height
+      );
+
+      return {
+        id: generateDesignId(),
+        name: size.name,
+        sizeId: size.id,
+        width: size.width,
+        height: size.height,
+        layers: scaledLayers,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+    }).filter(Boolean) as GeneratedDesign[];
+
+    set({
+      generatedDesigns: newDesigns,
+      selectedGeneratedDesignId: newDesigns.length > 0 ? newDesigns[0].id : null,
+    });
+  },
+
+  selectGeneratedDesign: (id) => {
+    set({ selectedGeneratedDesignId: id });
+  },
+
+  updateGeneratedDesign: (id, updates) => {
+    const { generatedDesigns } = get();
+    const updatedDesigns = generatedDesigns.map((d) =>
+      d.id === id ? { ...d, ...updates, updatedAt: Date.now() } : d
+    );
+    set({ generatedDesigns: updatedDesigns });
+  },
+
+  deleteGeneratedDesign: (id) => {
+    const { generatedDesigns, selectedGeneratedDesignId } = get();
+    const newDesigns = generatedDesigns.filter((d) => d.id !== id);
+    set({
+      generatedDesigns: newDesigns,
+      selectedGeneratedDesignId:
+        selectedGeneratedDesignId === id
+          ? newDesigns.length > 0
+            ? newDesigns[0].id
+            : null
+          : selectedGeneratedDesignId,
+    });
+  },
+
+  applyGeneratedDesignToCanvas: (id) => {
+    const { generatedDesigns } = get();
+    const design = generatedDesigns.find((d) => d.id === id);
+    if (!design) return;
+
+    if ((window as any).__setLayers) {
+      (window as any).__setLayers(design.layers);
+    }
+    const canvasStore = (window as any).__canvasState;
+    if (canvasStore && canvasStore.setSize) {
+      canvasStore.setSize(design.width, design.height);
+    }
+  },
+
+  saveGeneratedDesignAsSnapshot: (id, name) => {
+    const { generatedDesigns, saveSnapshot } = get();
+    const design = generatedDesigns.find((d) => d.id === id);
+    if (!design) return;
+
+    const tempLayers = (window as any).__layersState;
+    const tempCanvas = (window as any).__canvasState;
+
+    (window as any).__layersState = design.layers;
+    (window as any).__canvasState = {
+      ...tempCanvas,
+      width: design.width,
+      height: design.height,
+    };
+
+    saveSnapshot(name);
+
+    (window as any).__layersState = tempLayers;
+    (window as any).__canvasState = tempCanvas;
+  },
+
+  clearGeneratedDesigns: () => {
+    set({ generatedDesigns: [], selectedGeneratedDesignId: null });
   },
 
   getCurrentProject: () => {

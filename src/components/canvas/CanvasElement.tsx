@@ -304,18 +304,66 @@ const TextContent: React.FC<{ layer: TextLayer }> = ({ layer }) => {
 };
 
 const ImageContent: React.FC<{ layer: ImageLayer }> = ({ layer }) => {
+  const [processedSrc, setProcessedSrc] = useState<string>(layer.src);
+  const [isProcessing, setIsProcessing] = useState(false);
+
   const filter = layer.filter
     ? `brightness(${layer.filter.brightness}%) contrast(${layer.filter.contrast}%) saturate(${layer.filter.saturate}%)`
     : 'none';
 
+  useEffect(() => {
+    if (layer.backgroundRemoved) {
+      setIsProcessing(true);
+      import('@/utils/imageProcessing')
+        .then(({ removeBackground }) => {
+          return removeBackground(layer.src, {
+            threshold: 25,
+            tolerance: 30,
+            edgeSoftness: 2,
+          });
+        })
+        .then((result) => {
+          setProcessedSrc(result);
+          setIsProcessing(false);
+        })
+        .catch(() => {
+          setProcessedSrc(layer.src);
+          setIsProcessing(false);
+        });
+    } else {
+      setProcessedSrc(layer.src);
+    }
+  }, [layer.src, layer.backgroundRemoved]);
+
   return (
-    <img
-      src={layer.src}
-      alt=""
-      className="w-full h-full object-cover pointer-events-none select-none"
-      style={{ filter }}
-      draggable={false}
-    />
+    <div className="w-full h-full relative">
+      {layer.backgroundRemoved && (
+        <div
+          className="absolute inset-0"
+          style={{
+            backgroundImage:
+              'linear-gradient(45deg, #e5e5e5 25%, transparent 25%), linear-gradient(-45deg, #e5e5e5 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #e5e5e5 75%), linear-gradient(-45deg, transparent 75%, #e5e5e5 75%)',
+            backgroundSize: '12px 12px',
+            backgroundPosition: '0 0, 0 6px, 6px -6px, -6px 0px',
+            backgroundColor: '#ffffff',
+          }}
+        />
+      )}
+      <img
+        src={processedSrc}
+        alt=""
+        className={`w-full h-full object-cover pointer-events-none select-none relative z-10 ${
+          isProcessing ? 'opacity-50' : 'opacity-100'
+        }`}
+        style={{ filter }}
+        draggable={false}
+      />
+      {isProcessing && (
+        <div className="absolute inset-0 flex items-center justify-center z-20 bg-black/30">
+          <span className="text-xs text-white font-medium">去背处理中...</span>
+        </div>
+      )}
+    </div>
   );
 };
 

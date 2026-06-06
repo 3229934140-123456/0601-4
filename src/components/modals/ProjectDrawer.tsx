@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   X,
   Plus,
@@ -34,14 +34,20 @@ export const ProjectDrawer: React.FC = () => {
     restoreSnapshot,
     deleteSnapshot,
     batchReplaceText,
+    countMatchingTextLayers,
   } = useProjectStore();
   const { setSize, setBackgroundColor } = useCanvasStore();
   const { setLayers } = useLayerStore();
   const [searchQuery, setSearchQuery] = useState('');
-  const [filter, setFilter] = useState<'all' | 'active' | 'archived'>('all');
+  const [filter, setFilter] = useState<'all' | 'active' | 'archived'>('active');
   const [showBatchReplace, setShowBatchReplace] = useState(false);
   const [findText, setFindText] = useState('');
   const [replaceText, setReplaceText] = useState('');
+
+  const matchCount = useMemo(() => {
+    if (!findText) return 0;
+    return countMatchingTextLayers(findText);
+  }, [findText, countMatchingTextLayers, showProjectPanel]);
 
   const filteredProjects = projects.filter((p) => {
     const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase());
@@ -128,7 +134,10 @@ export const ProjectDrawer: React.FC = () => {
 
           {showBatchReplace && (
             <div className="p-3 bg-surface-800 rounded-lg space-y-2">
-              <p className="text-xs font-medium text-surface-300">批量替换文字</p>
+              <p className="text-xs font-medium text-surface-300 flex items-center gap-1.5">
+                <Replace size={12} />
+                批量替换文字
+              </p>
               <input
                 type="text"
                 placeholder="查找文字"
@@ -143,14 +152,31 @@ export const ProjectDrawer: React.FC = () => {
                 onChange={(e) => setReplaceText(e.target.value)}
                 className="w-full px-3 py-1.5 text-sm bg-surface-900 border border-surface-700 rounded text-surface-200 focus:outline-none focus:border-brand-500"
               />
+              <div className="flex items-center justify-between">
+                <span className={`text-xs ${
+                  findText && matchCount > 0
+                    ? 'text-brand-400'
+                    : 'text-surface-500'
+                }`}>
+                  {findText
+                    ? matchCount > 0
+                      ? `找到 ${matchCount} 个匹配图层`
+                      : '未找到匹配文字'
+                    : '输入要查找的文字'}
+                </span>
+              </div>
               <Button
                 variant="primary"
                 size="sm"
                 className="w-full"
                 onClick={handleBatchReplace}
+                disabled={!findText || matchCount === 0}
               >
-                全部替换
+                全部替换 {matchCount > 0 ? `(${matchCount})` : ''}
               </Button>
+              <p className="text-[10px] text-surface-500">
+                提示：按普通文字匹配，不会把点号、括号等当作特殊规则
+              </p>
             </div>
           )}
 

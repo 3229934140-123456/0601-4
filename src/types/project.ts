@@ -1,6 +1,18 @@
 import type { Layer } from './layer';
 import type { CanvasState } from './canvas';
 
+export interface GeneratedDesign {
+  id: string;
+  name: string;
+  sizeId: string;
+  width: number;
+  height: number;
+  layers: Layer[];
+  thumbnail?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface Project {
   id: string;
   name: string;
