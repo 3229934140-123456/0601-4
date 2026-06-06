@@ -9,6 +9,8 @@ export interface GeneratedDesign {
   height: number;
   layers: Layer[];
   thumbnail?: string;
+  note?: string;
+  selectedLayerId: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -22,6 +24,8 @@ export interface Project {
   canvas: CanvasState;
   layers: Layer[];
   archived: boolean;
+  starred: boolean;
+  lastOpenedAt?: number;
 }
 
 export interface VersionSnapshot {

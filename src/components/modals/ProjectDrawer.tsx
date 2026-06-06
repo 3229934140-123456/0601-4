@@ -10,6 +10,8 @@ import {
   FileText,
   Save,
   Replace,
+  Star,
+  History,
 } from 'lucide-react';
 import { useProjectStore } from '@/store/projectStore';
 import { useCanvasStore } from '@/store/canvasStore';
@@ -35,11 +37,13 @@ export const ProjectDrawer: React.FC = () => {
     deleteSnapshot,
     batchReplaceText,
     countMatchingTextLayers,
+    updateSavedState,
+    toggleStarProject,
   } = useProjectStore();
   const { setSize, setBackgroundColor } = useCanvasStore();
   const { setLayers } = useLayerStore();
   const [searchQuery, setSearchQuery] = useState('');
-  const [filter, setFilter] = useState<'all' | 'active' | 'archived'>('active');
+  const [filter, setFilter] = useState<'all' | 'active' | 'archived' | 'starred' | 'recent'>('active');
   const [showBatchReplace, setShowBatchReplace] = useState(false);
   const [findText, setFindText] = useState('');
   const [replaceText, setReplaceText] = useState('');
@@ -49,16 +53,42 @@ export const ProjectDrawer: React.FC = () => {
     return countMatchingTextLayers(findText);
   }, [findText, countMatchingTextLayers, showProjectPanel]);
 
-  const filteredProjects = projects.filter((p) => {
-    const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesFilter =
-      filter === 'all'
-        ? true
-        : filter === 'active'
-        ? !p.archived
-        : p.archived;
-    return matchesSearch && matchesFilter;
-  });
+  const filteredProjects = useMemo(() => {
+    let result = [...projects];
+
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter((p) => p.name.toLowerCase().includes(query));
+    }
+
+    switch (filter) {
+      case 'active':
+        result = result.filter((p) => !p.archived);
+        break;
+      case 'archived':
+        result = result.filter((p) => p.archived);
+        break;
+      case 'starred':
+        result = result.filter((p) => p.starred && !p.archived);
+        break;
+      case 'recent':
+        result = result
+          .filter((p) => p.lastOpenedAt && !p.archived)
+          .sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0));
+        break;
+      default:
+        break;
+    }
+
+    if (filter !== 'recent') {
+      result.sort((a, b) => {
+        if (a.starred !== b.starred) return a.starred ? -1 : 1;
+        return b.updatedAt - a.updatedAt;
+      });
+    }
+
+    return result;
+  }, [projects, searchQuery, filter]);
 
   const handleLoadProject = (id: string) => {
     const project = projects.find((p) => p.id === id);
@@ -68,6 +98,10 @@ export const ProjectDrawer: React.FC = () => {
     setBackgroundColor(project.canvas.backgroundColor);
     setLayers(project.layers as Layer[]);
     loadProject(id);
+    
+    setTimeout(() => {
+      updateSavedState();
+    }, 0);
   };
 
   const handleNewProject = () => {
@@ -78,6 +112,9 @@ export const ProjectDrawer: React.FC = () => {
         setSize(1080, 1080);
         setBackgroundColor('#ffffff');
         setLayers([]);
+        setTimeout(() => {
+          updateSavedState();
+        }, 0);
       }
     }
   };
@@ -191,18 +228,24 @@ export const ProjectDrawer: React.FC = () => {
             />
           </div>
 
-          <div className="flex gap-1">
-            {(['all', 'active', 'archived'] as const).map((f) => (
+          <div className="flex flex-wrap gap-1">
+            {([
+              { key: 'active', label: '进行中', icon: <Folder size={11} /> },
+              { key: 'starred', label: '星标', icon: <Star size={11} /> },
+              { key: 'recent', label: '最近', icon: <History size={11} /> },
+              { key: 'archived', label: '已归档', icon: <Archive size={11} /> },
+            ] as const).map((f) => (
               <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`flex-1 py-1.5 text-xs rounded-md transition-colors ${
-                  filter === f
+                key={f.key}
+                onClick={() => setFilter(f.key)}
+                className={`flex items-center gap-1 px-2 py-1.5 text-xs rounded-md transition-colors ${
+                  filter === f.key
                     ? 'bg-surface-700 text-surface-200'
                     : 'text-surface-500 hover:text-surface-300'
                 }`}
               >
-                {f === 'all' ? '全部' : f === 'active' ? '进行中' : '已归档'}
+                {f.icon}
+                <span>{f.label}</span>
               </button>
             ))}
           </div>
@@ -275,69 +318,91 @@ export const ProjectDrawer: React.FC = () => {
                   }`}
                 >
                   <div className="flex items-start gap-3">
-                    <div className="w-12 h-12 rounded bg-surface-900 flex items-center justify-center flex-shrink-0 overflow-hidden">
-                      {project.thumbnail ? (
-                        <img
-                          src={project.thumbnail}
-                          alt=""
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <FileText
-                          size={20}
-                          className="text-surface-600"
-                        />
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-surface-200 truncate">
-                        {project.name}
-                      </p>
-                      <p className="text-xs text-surface-500 mt-0.5">
-                        {project.canvas.width} × {project.canvas.height}
-                      </p>
-                      <p className="text-[10px] text-surface-600 mt-0.5">
-                        更新于 {formatDate(project.updatedAt)}
-                      </p>
-                    </div>
-                    <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {project.archived ? (
+                      <div className="w-12 h-12 rounded bg-surface-900 flex items-center justify-center flex-shrink-0 overflow-hidden relative">
+                        {project.thumbnail ? (
+                          <img
+                            src={project.thumbnail}
+                            alt=""
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <FileText
+                            size={20}
+                            className="text-surface-600"
+                          />
+                        )}
+                        {project.starred && (
+                          <div className="absolute top-0.5 left-0.5">
+                            <Star size={10} className="text-amber-400 fill-amber-400" />
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-surface-200 truncate flex items-center gap-1">
+                          {project.name}
+                          {project.starred && (
+                            <Star size={10} className="text-amber-400 fill-amber-400 flex-shrink-0" />
+                          )}
+                        </p>
+                        <p className="text-xs text-surface-500 mt-0.5">
+                          {project.canvas.width} × {project.canvas.height}
+                        </p>
+                        <p className="text-[10px] text-surface-600 mt-0.5">
+                          更新于 {formatDate(project.updatedAt)}
+                        </p>
+                      </div>
+                      <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            unarchiveProject(project.id);
+                            toggleStarProject(project.id);
                           }}
-                          className="p-1 text-surface-400 hover:text-surface-200 rounded"
-                          title="取消归档"
+                          className={`p-1 rounded ${
+                            project.starred
+                              ? 'text-amber-400 hover:text-amber-300'
+                              : 'text-surface-400 hover:text-surface-200'
+                          }`}
+                          title={project.starred ? '取消星标' : '加星标'}
                         >
-                          <Archive size={13} />
+                          <Star size={13} className={project.starred ? 'fill-amber-400' : ''} />
                         </button>
-                      ) : (
+                        {project.archived ? (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              unarchiveProject(project.id);
+                            }}
+                            className="p-1 text-surface-400 hover:text-surface-200 rounded"
+                            title="取消归档"
+                          >
+                            <Archive size={13} />
+                          </button>
+                        ) : (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              archiveProject(project.id);
+                            }}
+                            className="p-1 text-surface-400 hover:text-surface-200 rounded"
+                            title="归档"
+                          >
+                            <Archive size={13} />
+                          </button>
+                        )}
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            archiveProject(project.id);
+                            if (confirm('确定删除这个项目吗？')) {
+                              deleteProject(project.id);
+                            }
                           }}
-                          className="p-1 text-surface-400 hover:text-surface-200 rounded"
-                          title="归档"
+                          className="p-1 text-surface-400 hover:text-accent-coral rounded"
+                          title="删除"
                         >
-                          <Archive size={13} />
+                          <Trash2 size={13} />
                         </button>
-                      )}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (confirm('确定删除这个项目吗？')) {
-                            deleteProject(project.id);
-                          }
-                        }}
-                        className="p-1 text-surface-400 hover:text-accent-coral rounded"
-                        title="删除"
-                      >
-                        <Trash2 size={13} />
-                      </button>
+                      </div>
                     </div>
-                  </div>
                 </div>
               ))}
             </div>

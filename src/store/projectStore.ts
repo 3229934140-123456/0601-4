@@ -18,11 +18,15 @@ interface ProjectStore {
   generatedDesigns: GeneratedDesign[];
   selectedGeneratedDesignId: string | null;
   isDirty: boolean;
+  savedLayers: Layer[] | null;
+  savedCanvas: CanvasState | null;
 
   setShowExportModal: (show: boolean) => void;
   setShowProjectPanel: (show: boolean) => void;
   setShowGenerationCenter: (show: boolean) => void;
   setIsDirty: (dirty: boolean) => void;
+  updateSavedState: () => void;
+  checkIsDirty: () => void;
 
   createNewProject: (name: string, width: number, height: number) => string;
   createProjectFromTemplate: (templateId: string) => string;
@@ -32,6 +36,7 @@ interface ProjectStore {
   archiveProject: (id: string) => void;
   unarchiveProject: (id: string) => void;
   renameProject: (id: string, name: string) => void;
+  toggleStarProject: (id: string) => void;
 
   saveSnapshot: (name: string) => void;
   restoreSnapshot: (snapshotId: string) => void;
@@ -51,6 +56,9 @@ interface ProjectStore {
   applyGeneratedDesignToCanvas: (id: string) => void;
   saveGeneratedDesignAsSnapshot: (id: string, name: string) => void;
   clearGeneratedDesigns: () => void;
+  duplicateGeneratedDesign: (id: string) => void;
+  selectGeneratedDesignLayer: (designId: string, layerId: string | null) => void;
+  updateGeneratedDesignLayer: (designId: string, layerId: string, updates: Partial<Layer>) => void;
 
   getCurrentProject: () => Project | null;
 }
@@ -134,11 +142,49 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   generatedDesigns: [],
   selectedGeneratedDesignId: null,
   isDirty: false,
+  savedLayers: null,
+  savedCanvas: null,
 
   setShowExportModal: (show) => set({ showExportModal: show }),
   setShowProjectPanel: (show) => set({ showProjectPanel: show }),
   setShowGenerationCenter: (show) => set({ showGenerationCenter: show }),
   setIsDirty: (dirty) => set({ isDirty: dirty }),
+
+  updateSavedState: () => {
+    const canvasState = (window as any).__canvasState as CanvasState | undefined;
+    const layersState = (window as any).__layersState as Layer[] | undefined;
+    if (canvasState && layersState) {
+      set({
+        savedLayers: JSON.parse(JSON.stringify(layersState)),
+        savedCanvas: JSON.parse(JSON.stringify(canvasState)),
+        isDirty: false,
+      });
+    }
+  },
+
+  checkIsDirty: () => {
+    const { savedLayers, savedCanvas } = get();
+    if (!savedLayers || !savedCanvas) {
+      set({ isDirty: true });
+      return;
+    }
+
+    const canvasState = (window as any).__canvasState as CanvasState | undefined;
+    const layersState = (window as any).__layersState as Layer[] | undefined;
+
+    if (!canvasState || !layersState) {
+      set({ isDirty: false });
+      return;
+    }
+
+    const layersChanged = JSON.stringify(savedLayers) !== JSON.stringify(layersState);
+    const canvasChanged =
+      savedCanvas.width !== canvasState.width ||
+      savedCanvas.height !== canvasState.height ||
+      savedCanvas.backgroundColor !== canvasState.backgroundColor;
+
+    set({ isDirty: layersChanged || canvasChanged });
+  },
 
   createNewProject: (name, width, height) => {
     const { projects } = get();
@@ -161,6 +207,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       },
       layers: [],
       archived: false,
+      starred: false,
     };
     const newProjects = [newProject, ...projects];
     saveToStorage(newProjects);
@@ -198,6 +245,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       },
       layers: layers as Layer[],
       archived: false,
+      starred: false,
     };
 
     const newProjects = [newProject, ...projects];
@@ -207,7 +255,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   saveProject: () => {
-    const { currentProjectId, projects } = get();
+    const { currentProjectId, projects, updateSavedState } = get();
     if (!currentProjectId) return;
 
     const canvasState = (window as any).__canvasState;
@@ -225,14 +273,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     );
 
     saveToStorage(updatedProjects);
-    set({ projects: updatedProjects, isDirty: false });
+    set({ projects: updatedProjects });
+    updateSavedState();
   },
 
   loadProject: (id) => {
     const { projects } = get();
     const project = projects.find((p) => p.id === id);
     if (project) {
-      set({ currentProjectId: id, versionSnapshots: [], isDirty: false });
+      const updatedProjects = projects.map((p) =>
+        p.id === id ? { ...p, lastOpenedAt: Date.now() } : p
+      );
+      saveToStorage(updatedProjects);
+      set({ currentProjectId: id, versionSnapshots: [], projects: updatedProjects, isDirty: false });
     }
   },
 
@@ -268,6 +321,15 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const { projects } = get();
     const newProjects = projects.map((p) =>
       p.id === id ? { ...p, name, updatedAt: Date.now() } : p
+    );
+    saveToStorage(newProjects);
+    set({ projects: newProjects });
+  },
+
+  toggleStarProject: (id) => {
+    const { projects } = get();
+    const newProjects = projects.map((p) =>
+      p.id === id ? { ...p, starred: !p.starred, updatedAt: Date.now() } : p
     );
     saveToStorage(newProjects);
     set({ projects: newProjects });
@@ -403,6 +465,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         width: size.width,
         height: size.height,
         layers: scaledLayers,
+        selectedLayerId: null,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
@@ -477,6 +540,48 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   clearGeneratedDesigns: () => {
     set({ generatedDesigns: [], selectedGeneratedDesignId: null });
+  },
+
+  duplicateGeneratedDesign: (id) => {
+    const { generatedDesigns } = get();
+    const design = generatedDesigns.find((d) => d.id === id);
+    if (!design) return;
+
+    const newDesign: GeneratedDesign = {
+      ...design,
+      id: generateDesignId(),
+      name: `${design.name} 副本`,
+      layers: JSON.parse(JSON.stringify(design.layers)),
+      selectedLayerId: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    const newDesigns = [...generatedDesigns, newDesign];
+    set({
+      generatedDesigns: newDesigns,
+      selectedGeneratedDesignId: newDesign.id,
+    });
+  },
+
+  selectGeneratedDesignLayer: (designId, layerId) => {
+    const { generatedDesigns } = get();
+    const updatedDesigns = generatedDesigns.map((d) =>
+      d.id === designId ? { ...d, selectedLayerId: layerId } : d
+    );
+    set({ generatedDesigns: updatedDesigns });
+  },
+
+  updateGeneratedDesignLayer: (designId, layerId, updates) => {
+    const { generatedDesigns } = get();
+    const updatedDesigns = generatedDesigns.map((d) => {
+      if (d.id !== designId) return d;
+      const updatedLayers = d.layers.map((l) =>
+        l.id === layerId ? ({ ...l, ...updates } as Layer) : l
+      );
+      return { ...d, layers: updatedLayers, updatedAt: Date.now() };
+    });
+    set({ generatedDesigns: updatedDesigns });
   },
 
   getCurrentProject: () => {

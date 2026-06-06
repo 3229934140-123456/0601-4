@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect } from 'react';
 import { Toolbar } from '@/components/panels/Toolbar/Toolbar';
 import { LeftPanel } from '@/components/panels/LeftPanel/LeftPanel';
 import { RightPanel } from '@/components/panels/RightPanel/RightPanel';
@@ -13,28 +13,20 @@ import { useProjectStore } from '@/store/projectStore';
 export const Editor: React.FC = () => {
   const canvasState = useCanvasStore();
   const layerState = useLayerStore();
-  const { saveSnapshot, setIsDirty, currentProjectId } = useProjectStore();
-
-  const prevLayersRef = useRef(layerState.layers);
-  const prevCanvasRef = useRef({ width: canvasState.width, height: canvasState.height, backgroundColor: canvasState.backgroundColor });
+  const { saveSnapshot, checkIsDirty, currentProjectId, updateSavedState } = useProjectStore();
 
   useEffect(() => {
-    const layersChanged = JSON.stringify(prevLayersRef.current) !== JSON.stringify(layerState.layers);
-    const canvasChanged =
-      prevCanvasRef.current.width !== canvasState.width ||
-      prevCanvasRef.current.height !== canvasState.height ||
-      prevCanvasRef.current.backgroundColor !== canvasState.backgroundColor;
-
-    if (layersChanged || canvasChanged) {
-      setIsDirty(true);
-      prevLayersRef.current = layerState.layers;
-      prevCanvasRef.current = {
-        width: canvasState.width,
-        height: canvasState.height,
-        backgroundColor: canvasState.backgroundColor,
-      };
+    if (currentProjectId) {
+      checkIsDirty();
     }
-  }, [layerState.layers, canvasState.width, canvasState.height, canvasState.backgroundColor, setIsDirty]);
+  }, [
+    layerState.layers,
+    canvasState.width,
+    canvasState.height,
+    canvasState.backgroundColor,
+    checkIsDirty,
+    currentProjectId,
+  ]);
 
   useEffect(() => {
     (window as any).__canvasState = canvasState;
