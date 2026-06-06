@@ -1,6 +1,7 @@
 import { toPng, toJpeg } from 'html-to-image';
-import type { Layer } from '@/types/layer';
+import type { Layer, ImageLayer } from '@/types/layer';
 import type { ExportConfig } from '@/types/project';
+import { removeBackground } from './imageProcessing';
 
 export interface ExportSize {
   id: string;
@@ -44,11 +45,36 @@ function scaleLayersForSize(
   })) as Layer[];
 }
 
+async function processImageLayers(layers: Layer[]): Promise<Map<string, string>> {
+  const processedMap = new Map<string, string>();
+  const imageLayers = layers.filter((l) => l.type === 'image' && l.visible) as ImageLayer[];
+
+  for (const layer of imageLayers) {
+    if (layer.backgroundRemoved) {
+      try {
+        const processed = await removeBackground(layer.src, {
+          threshold: 25,
+          tolerance: 30,
+          edgeSoftness: 2,
+        });
+        processedMap.set(layer.id, processed);
+      } catch {
+        processedMap.set(layer.id, layer.src);
+      }
+    } else {
+      processedMap.set(layer.id, layer.src);
+    }
+  }
+
+  return processedMap;
+}
+
 function createExportCanvas(
   layers: Layer[],
   width: number,
   height: number,
-  backgroundColor: string
+  backgroundColor: string,
+  processedImages: Map<string, string> = new Map()
 ): HTMLElement {
   const container = document.createElement('div');
   container.style.position = 'fixed';
@@ -100,7 +126,8 @@ function createExportCanvas(
     } else if (layer.type === 'image') {
       const imgLayer = layer as any;
       const img = document.createElement('img');
-      img.src = imgLayer.src;
+      const src = processedImages.get(layer.id) || imgLayer.src;
+      img.src = src;
       img.style.width = '100%';
       img.style.height = '100%';
       img.style.objectFit = 'cover';
@@ -162,7 +189,8 @@ export async function exportToDataUrl(
   format: 'png' | 'jpeg' | 'webp' = 'png',
   quality: number = 0.9
 ): Promise<string> {
-  const container = createExportCanvas(layers, width, height, backgroundColor);
+  const processedImages = await processImageLayers(layers);
+  const container = createExportCanvas(layers, width, height, backgroundColor, processedImages);
 
   try {
     let dataUrl: string;

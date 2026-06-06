@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Undo2,
   Redo2,
@@ -10,6 +10,7 @@ import {
   ChevronDown,
   Maximize2,
   Layers,
+  Clock,
 } from 'lucide-react';
 import { useLayerStore } from '@/store/layerStore';
 import { useCanvasStore } from '@/store/canvasStore';
@@ -30,10 +31,28 @@ export const Toolbar: React.FC = () => {
     getCurrentProject,
     isDirty,
     currentProjectId,
+    getLastSaveRecord,
   } = useProjectStore();
   const [showSizeMenu, setShowSizeMenu] = useState(false);
 
   const currentProject = getCurrentProject();
+  const lastSaveRecord = getLastSaveRecord();
+
+  const saveStatusText = useMemo(() => {
+    if (!currentProjectId) return '';
+    if (isDirty) return '未保存';
+    if (lastSaveRecord) {
+      return lastSaveRecord.type === 'auto' ? '自动保存' : '已保存';
+    }
+    return '已保存';
+  }, [isDirty, currentProjectId, lastSaveRecord]);
+
+  const saveStatusColor = useMemo(() => {
+    if (!currentProjectId) return 'bg-surface-700';
+    if (isDirty) return 'bg-accent-coral';
+    if (lastSaveRecord?.type === 'auto') return 'bg-accent-cyan';
+    return 'bg-emerald-500';
+  }, [isDirty, currentProjectId, lastSaveRecord]);
 
   const socialSizes = canvasSizes.filter((s) => s.category === 'social');
   const posterSizes = canvasSizes.filter((s) => s.category === 'poster');
@@ -67,14 +86,19 @@ export const Toolbar: React.FC = () => {
             </span>
             {currentProject && (
               <div className="flex items-center gap-1.5">
-                <span className="text-[10px] text-surface-400 truncate max-w-[120px]">
+                <span className="text-[10px] text-surface-400 truncate max-w-[100px]">
                   {currentProject.name}
                 </span>
-                {isDirty ? (
-                  <span className="w-1.5 h-1.5 rounded-full bg-accent-coral flex-shrink-0" title="未保存" />
-                ) : (
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 flex-shrink-0" title="已保存" />
-                )}
+                <div className="flex items-center gap-1" title={saveStatusText}>
+                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${saveStatusColor}`} />
+                  <span className={`text-[9px] ${
+                    isDirty ? 'text-accent-coral' :
+                    lastSaveRecord?.type === 'auto' ? 'text-accent-cyan' :
+                    'text-emerald-400'
+                  }`}>
+                    {saveStatusText}
+                  </span>
+                </div>
               </div>
             )}
           </div>
@@ -92,7 +116,7 @@ export const Toolbar: React.FC = () => {
           </button>
 
           <button
-            onClick={saveProject}
+            onClick={() => saveProject('manual')}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-surface-300 hover:text-surface-100 hover:bg-surface-800 rounded-md transition-colors"
           >
             <Save size={14} />

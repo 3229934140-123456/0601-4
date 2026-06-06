@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Toolbar } from '@/components/panels/Toolbar/Toolbar';
 import { LeftPanel } from '@/components/panels/LeftPanel/LeftPanel';
 import { RightPanel } from '@/components/panels/RightPanel/RightPanel';
@@ -10,10 +10,13 @@ import { useCanvasStore } from '@/store/canvasStore';
 import { useLayerStore } from '@/store/layerStore';
 import { useProjectStore } from '@/store/projectStore';
 
+const AUTO_SAVE_DELAY = 3000;
+
 export const Editor: React.FC = () => {
   const canvasState = useCanvasStore();
   const layerState = useLayerStore();
-  const { saveSnapshot, checkIsDirty, currentProjectId, updateSavedState } = useProjectStore();
+  const { saveSnapshot, checkIsDirty, currentProjectId, updateSavedState, isDirty, saveProject } = useProjectStore();
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (currentProjectId) {
@@ -27,6 +30,25 @@ export const Editor: React.FC = () => {
     checkIsDirty,
     currentProjectId,
   ]);
+
+  useEffect(() => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+
+    if (isDirty && currentProjectId) {
+      autoSaveTimerRef.current = setTimeout(() => {
+        saveProject('auto');
+      }, AUTO_SAVE_DELAY);
+    }
+
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, [isDirty, currentProjectId, saveProject]);
 
   useEffect(() => {
     (window as any).__canvasState = canvasState;

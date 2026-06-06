@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   X,
   Sparkles,
@@ -21,17 +21,40 @@ import {
   StickyNote,
   GitCompareArrows,
   Clock,
-  Star,
+  Check,
+  CheckSquare,
+  Square,
+  Settings,
+  ChevronDown,
+  ChevronRight,
+  Folder,
+  RefreshCw,
+  DownloadCloud,
 } from 'lucide-react';
 import { useProjectStore } from '@/store/projectStore';
 import { useCanvasStore } from '@/store/canvasStore';
 import { useLayerStore } from '@/store/layerStore';
 import { canvasSizes } from '@/data/canvasSizes';
 import type { CanvasSize } from '@/types/canvas';
+import type { GeneratedDesign } from '@/types/project';
 import type { Layer } from '@/types/layer';
 import { exportToDataUrl, downloadImage } from '@/utils/export';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
+
+interface ExportSettings {
+  format: 'png' | 'jpeg' | 'webp';
+  quality: number;
+  filename: string;
+}
+
+interface ExportResult {
+  designId: string;
+  name: string;
+  success: boolean;
+  size?: string;
+  error?: string;
+}
 
 export const GenerationCenter: React.FC = () => {
   const {
@@ -39,8 +62,12 @@ export const GenerationCenter: React.FC = () => {
     setShowGenerationCenter,
     generatedDesigns,
     selectedGeneratedDesignId,
+    selectedDesignIds,
     generateDesigns,
     selectGeneratedDesign,
+    toggleSelectDesign,
+    selectAllDesigns,
+    deselectAllDesigns,
     updateGeneratedDesign,
     deleteGeneratedDesign,
     applyGeneratedDesignToCanvas,
@@ -49,6 +76,7 @@ export const GenerationCenter: React.FC = () => {
     duplicateGeneratedDesign,
     selectGeneratedDesignLayer,
     updateGeneratedDesignLayer,
+    saveGeneratedDesignsToProject,
   } = useProjectStore();
 
   const { width: currentWidth, height: currentHeight, backgroundColor } = useCanvasStore();
@@ -63,7 +91,14 @@ export const GenerationCenter: React.FC = () => {
   const [editingName, setEditingName] = useState(false);
   const [tempName, setTempName] = useState('');
   const [isExporting, setIsExporting] = useState(false);
-  const [activeTab, setActiveTab] = useState<'layers' | 'details'>('layers');
+  const [activeTab, setActiveTab] = useState<'layers' | 'details' | 'export'>('layers');
+  const [thumbnails, setThumbnails] = useState<Map<string, string>>(new Map());
+  const [exportResults, setExportResults] = useState<ExportResult[]>([]);
+  const [showExportResults, setShowExportResults] = useState(false);
+  const [globalFormat, setGlobalFormat] = useState<'png' | 'jpeg' | 'webp'>('png');
+  const [globalQuality, setGlobalQuality] = useState(0.9);
+  const [showBatchSettings, setShowBatchSettings] = useState(false);
+  const thumbnailCache = useRef<Map<string, string>>(new Map());
 
   const socialSizes = canvasSizes.filter((s) => s.category === 'social');
   const posterSizes = canvasSizes.filter((s) => s.category === 'poster');
@@ -84,6 +119,31 @@ export const GenerationCenter: React.FC = () => {
     return selectedDesign.layers.filter((l) => l.type === 'text');
   }, [selectedDesign]);
 
+  useEffect(() => {
+    const generateThumbnails = async () => {
+      for (const design of generatedDesigns) {
+        if (thumbnailCache.current.has(design.id)) continue;
+        try {
+          const thumb = await exportToDataUrl(
+            design.layers,
+            design.width,
+            design.height,
+            design.backgroundColor,
+            'png',
+            0.6
+          );
+          thumbnailCache.current.set(design.id, thumb);
+          setThumbnails(new Map(thumbnailCache.current));
+        } catch {
+          // skip
+        }
+      }
+    };
+    if (generatedDesigns.length > 0) {
+      generateThumbnails();
+    }
+  }, [generatedDesigns]);
+
   const toggleSize = (sizeId: string) => {
     setSelectedSizeIds((prev) =>
       prev.includes(sizeId)
@@ -94,6 +154,8 @@ export const GenerationCenter: React.FC = () => {
 
   const handleGenerate = () => {
     if (selectedSizeIds.length === 0) return;
+    thumbnailCache.current.clear();
+    setThumbnails(new Map());
     generateDesigns(selectedSizeIds);
   };
 
@@ -113,7 +175,7 @@ export const GenerationCenter: React.FC = () => {
     }
   };
 
-  const handleExport = async () => {
+  const handleExportSingle = async () => {
     if (!selectedDesign) return;
     setIsExporting(true);
     try {
@@ -121,11 +183,12 @@ export const GenerationCenter: React.FC = () => {
         selectedDesign.layers,
         selectedDesign.width,
         selectedDesign.height,
-        backgroundColor,
-        'png',
-        0.9
+        selectedDesign.backgroundColor,
+        globalFormat,
+        globalQuality
       );
-      const filename = `${selectedDesign.name.replace(/\s+/g, '_')}.png`;
+      const ext = globalFormat === 'jpeg' ? 'jpg' : globalFormat;
+      const filename = `${selectedDesign.name.replace(/\s+/g, '_')}.${ext}`;
       downloadImage(dataUrl, filename);
     } catch (error) {
       console.error('Export failed:', error);
@@ -135,8 +198,54 @@ export const GenerationCenter: React.FC = () => {
     }
   };
 
+  const handleBatchExport = async () => {
+    if (selectedDesignIds.length === 0) return;
+    setIsExporting(true);
+    setExportResults([]);
+    setShowExportResults(true);
+
+    const results: ExportResult[] = [];
+
+    for (const designId of selectedDesignIds) {
+      const design = generatedDesigns.find((d) => d.id === designId);
+      if (!design) continue;
+
+      try {
+        const dataUrl = await exportToDataUrl(
+          design.layers,
+          design.width,
+          design.height,
+          design.backgroundColor,
+          globalFormat,
+          globalQuality
+        );
+        const ext = globalFormat === 'jpeg' ? 'jpg' : globalFormat;
+        const filename = `${design.name.replace(/\s+/g, '_')}.${ext}`;
+        downloadImage(dataUrl, filename);
+        results.push({
+          designId: design.id,
+          name: design.name,
+          success: true,
+          size: `${design.width} × ${design.height}`,
+        });
+      } catch (error) {
+        results.push({
+          designId: design.id,
+          name: design.name,
+          success: false,
+          error: error instanceof Error ? error.message : '导出失败',
+        });
+      }
+
+      setExportResults([...results]);
+    }
+
+    setIsExporting(false);
+  };
+
   const handleDuplicate = () => {
     if (selectedDesign) {
+      thumbnailCache.current.delete(selectedDesign.id);
       duplicateGeneratedDesign(selectedDesign.id);
     }
   };
@@ -171,6 +280,7 @@ export const GenerationCenter: React.FC = () => {
       x: selectedLayer.x + dx,
       y: selectedLayer.y + dy,
     });
+    thumbnailCache.current.delete(selectedDesign.id);
   };
 
   const handleLayerPositionChange = (axis: 'x' | 'y', value: number) => {
@@ -178,18 +288,33 @@ export const GenerationCenter: React.FC = () => {
     updateGeneratedDesignLayer(selectedDesign.id, selectedLayer.id, {
       [axis]: value,
     });
+    thumbnailCache.current.delete(selectedDesign.id);
+  };
+
+  const handleSaveToProject = () => {
+    saveGeneratedDesignsToProject();
+    alert('生成版本已保存到项目');
   };
 
   const handleClose = () => {
     setShowGenerationCenter(false);
     setShowCompare(false);
+    setShowExportResults(false);
+  };
+
+  const handleSelectAllToggle = () => {
+    if (selectedDesignIds.length === generatedDesigns.length) {
+      deselectAllDesigns();
+    } else {
+      selectAllDesigns();
+    }
   };
 
   if (!showGenerationCenter) return null;
 
   return (
     <Modal isOpen={showGenerationCenter} onClose={handleClose} size="xl">
-      <div className="flex flex-col h-[80vh]">
+      <div className="flex flex-col h-[85vh]">
         <div className="flex items-center justify-between p-4 border-b border-surface-700">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-brand-500 to-accent-cyan flex items-center justify-center">
@@ -205,6 +330,16 @@ export const GenerationCenter: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {generatedDesigns.length > 0 && (
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Save size={12} />}
+                onClick={handleSaveToProject}
+              >
+                保存到项目
+              </Button>
+            )}
             {generatedDesigns.length > 0 && (
               <Button
                 variant={showCompare ? 'primary' : 'secondary'}
@@ -292,21 +427,91 @@ export const GenerationCenter: React.FC = () => {
               </div>
             ) : showCompare && selectedDesign ? (
               <CompareView design={selectedDesign} />
+            ) : showExportResults ? (
+              <ExportResultsView
+                results={exportResults}
+                isExporting={isExporting}
+                onBack={() => setShowExportResults(false)}
+              />
             ) : (
               <>
                 <div className="p-3 border-b border-surface-700 flex items-center justify-between">
-                  <p className="text-xs font-medium text-surface-400">
-                    生成的设计 ({generatedDesigns.length})
-                  </p>
-                  <button
-                    onClick={handleDuplicate}
-                    disabled={!selectedDesign}
-                    className="flex items-center gap-1 px-2 py-1 text-xs text-surface-400 hover:text-surface-200 hover:bg-surface-800 rounded transition-colors disabled:opacity-50"
-                  >
-                    <Copy size={12} />
-                    复制当前
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleSelectAllToggle}
+                      className="flex items-center gap-2 text-xs text-surface-300 hover:text-surface-100"
+                    >
+                      {selectedDesignIds.length === generatedDesigns.length ? (
+                        <CheckSquare size={14} className="text-brand-400" />
+                      ) : (
+                        <Square size={14} />
+                      )}
+                      <span>全选 ({selectedDesignIds.length}/{generatedDesigns.length})</span>
+                    </button>
+                    <span className="text-surface-700">|</span>
+                    <span className="text-[11px] text-surface-500">
+                      点击卡片选中查看详情，点击复选框批量选择
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {selectedDesignIds.length > 0 && (
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        icon={<Download size={12} />}
+                        onClick={handleBatchExport}
+                        disabled={isExporting}
+                      >
+                        {isExporting ? '导出中...' : `批量导出 (${selectedDesignIds.length})`}
+                      </Button>
+                    )}
+                    <button
+                      onClick={() => setShowBatchSettings(!showBatchSettings)}
+                      className={`p-1.5 rounded transition-colors ${
+                        showBatchSettings
+                          ? 'bg-brand-500/20 text-brand-400'
+                          : 'text-surface-400 hover:text-surface-200 hover:bg-surface-800'
+                      }`}
+                      title="批量导出设置"
+                    >
+                      <Settings size={14} />
+                    </button>
+                  </div>
                 </div>
+
+                {showBatchSettings && (
+                  <div className="p-3 border-b border-surface-700 bg-surface-800/50">
+                    <p className="text-[11px] font-medium text-surface-400 mb-2">批量导出设置</p>
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2">
+                        <label className="text-[11px] text-surface-500">格式:</label>
+                        <select
+                          value={globalFormat}
+                          onChange={(e) => setGlobalFormat(e.target.value as any)}
+                          className="px-2 py-1 text-xs bg-surface-900 border border-surface-600 rounded text-surface-200 focus:outline-none focus:border-brand-500"
+                        >
+                          <option value="png">PNG</option>
+                          <option value="jpeg">JPG</option>
+                          <option value="webp">WebP</option>
+                        </select>
+                      </div>
+                      {globalFormat !== 'png' && (
+                        <div className="flex items-center gap-2">
+                          <label className="text-[11px] text-surface-500">质量: {Math.round(globalQuality * 100)}%</label>
+                          <input
+                            type="range"
+                            min="0.1"
+                            max="1"
+                            step="0.1"
+                            value={globalQuality}
+                            onChange={(e) => setGlobalQuality(Number(e.target.value))}
+                            className="w-24"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex-1 overflow-y-auto p-4">
                   <div className="grid grid-cols-3 gap-3">
@@ -320,8 +525,30 @@ export const GenerationCenter: React.FC = () => {
                             : 'border-surface-700 hover:border-surface-600'
                         }`}
                       >
+                        <div
+                          className="absolute top-2 left-2 z-10 p-0.5 rounded bg-surface-900/80"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleSelectDesign(design.id);
+                          }}
+                        >
+                          {selectedDesignIds.includes(design.id) ? (
+                            <CheckSquare size={14} className="text-brand-400" />
+                          ) : (
+                            <Square size={14} className="text-surface-400" />
+                          )}
+                        </div>
+
                         <div className="aspect-square bg-surface-800 rounded-t-lg overflow-hidden flex items-center justify-center p-2">
-                          <DesignPreview design={design} />
+                          {thumbnails.has(design.id) ? (
+                            <img
+                              src={thumbnails.get(design.id)!}
+                              alt=""
+                              className="max-w-full max-h-full object-contain shadow-md"
+                            />
+                          ) : (
+                            <DesignThumbnail design={design} />
+                          )}
                         </div>
                         <div className="p-2">
                           <p className="text-xs font-medium text-surface-200 truncate">
@@ -331,16 +558,35 @@ export const GenerationCenter: React.FC = () => {
                             {design.width} × {design.height}
                           </p>
                         </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deleteGeneratedDesign(design.id);
-                          }}
-                          className="absolute top-1.5 right-1.5 p-1 bg-surface-900/80 text-surface-400 hover:text-accent-coral rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                          title="删除"
-                        >
-                          <Trash2 size={12} />
-                        </button>
+                        <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              duplicateGeneratedDesign(design.id);
+                              thumbnailCache.current.delete(design.id);
+                            }}
+                            className="p-1 bg-surface-900/80 text-surface-400 hover:text-brand-400 rounded"
+                            title="复制变体"
+                          >
+                            <Copy size={11} />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteGeneratedDesign(design.id);
+                              thumbnailCache.current.delete(design.id);
+                            }}
+                            className="p-1 bg-surface-900/80 text-surface-400 hover:text-accent-coral rounded"
+                            title="删除"
+                          >
+                            <Trash2 size={11} />
+                          </button>
+                        </div>
+                        {design.parentId && (
+                          <div className="absolute bottom-8 right-2" title="变体">
+                            <RefreshCw size={10} className="text-accent-cyan" />
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -391,6 +637,12 @@ export const GenerationCenter: React.FC = () => {
                     <Clock size={10} />
                     <span>更新于 {new Date(selectedDesign.updatedAt).toLocaleString()}</span>
                   </div>
+                  {selectedDesign.parentId && (
+                    <div className="flex items-center gap-1.5 mt-1.5">
+                      <RefreshCw size={10} className="text-accent-cyan" />
+                      <span className="text-[10px] text-accent-cyan">这是一个变体</span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex border-b border-surface-700">
@@ -413,6 +665,16 @@ export const GenerationCenter: React.FC = () => {
                     }`}
                   >
                     详情
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('export')}
+                    className={`flex-1 py-2 text-xs font-medium transition-colors ${
+                      activeTab === 'export'
+                        ? 'text-brand-400 border-b-2 border-brand-400'
+                        : 'text-surface-500 hover:text-surface-300'
+                    }`}
+                  >
+                    导出
                   </button>
                 </div>
 
@@ -523,7 +785,7 @@ export const GenerationCenter: React.FC = () => {
                         </>
                       )}
                     </div>
-                  ) : (
+                  ) : activeTab === 'details' ? (
                     <div className="p-3 space-y-3">
                       <div>
                         <label className="text-[11px] font-medium text-surface-400 flex items-center gap-1.5 mb-1.5">
@@ -539,6 +801,26 @@ export const GenerationCenter: React.FC = () => {
                           rows={4}
                           className="w-full px-2 py-1.5 text-xs bg-surface-800 border border-surface-700 rounded text-surface-200 placeholder-surface-500 focus:outline-none focus:border-brand-500 resize-none"
                         />
+                      </div>
+
+                      <div className="space-y-2 pt-2">
+                        <p className="text-[11px] font-medium text-surface-400">背景色</p>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="color"
+                            value={selectedDesign.backgroundColor}
+                            onChange={(e) => {
+                              updateGeneratedDesign(selectedDesign.id, {
+                                backgroundColor: e.target.value,
+                              });
+                              thumbnailCache.current.delete(selectedDesign.id);
+                            }}
+                            className="w-8 h-8 rounded border border-surface-600 cursor-pointer"
+                          />
+                          <span className="text-xs text-surface-300 font-mono">
+                            {selectedDesign.backgroundColor}
+                          </span>
+                        </div>
                       </div>
 
                       <div className="space-y-2 pt-2">
@@ -592,6 +874,70 @@ export const GenerationCenter: React.FC = () => {
                         </div>
                       </div>
                     </div>
+                  ) : (
+                    <div className="p-3 space-y-3">
+                      <p className="text-[11px] font-medium text-surface-400">导出设置</p>
+                      
+                      <div className="space-y-2">
+                        <div>
+                          <label className="text-[10px] text-surface-500 block mb-1">格式</label>
+                          <select
+                            value={globalFormat}
+                            onChange={(e) => setGlobalFormat(e.target.value as any)}
+                            className="w-full px-2 py-1.5 text-xs bg-surface-800 border border-surface-700 rounded text-surface-200 focus:outline-none focus:border-brand-500"
+                          >
+                            <option value="png">PNG - 无损，支持透明</option>
+                            <option value="jpeg">JPG - 有损，体积小</option>
+                            <option value="webp">WebP - 现代格式，体积更小</option>
+                          </select>
+                        </div>
+
+                        {globalFormat !== 'png' && (
+                          <div>
+                            <label className="text-[10px] text-surface-500 block mb-1">
+                              质量: {Math.round(globalQuality * 100)}%
+                            </label>
+                            <input
+                              type="range"
+                              min="0.1"
+                              max="1"
+                              step="0.05"
+                              value={globalQuality}
+                              onChange={(e) => setGlobalQuality(Number(e.target.value))}
+                              className="w-full"
+                            />
+                          </div>
+                        )}
+
+                        <div className="bg-surface-800 rounded p-2 text-[11px] text-surface-400">
+                          <p>预计尺寸: {selectedDesign.width} × {selectedDesign.height} px</p>
+                          <p className="mt-1">
+                            文件大小约: {estimateFileSize(
+                              selectedDesign.width,
+                              selectedDesign.height,
+                              globalFormat,
+                              globalQuality
+                            )}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 pt-2">
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          icon={isExporting ? undefined : <Download size={12} />}
+                          className="w-full"
+                          onClick={handleExportSingle}
+                          disabled={isExporting}
+                        >
+                          {isExporting ? '导出中...' : '导出此设计'}
+                        </Button>
+                        <p className="text-[10px] text-surface-500 text-center">
+                          导出 {selectedDesign.width} × {selectedDesign.height} 的 {globalFormat.toUpperCase()} 图片
+                        </p>
+                      </div>
+                    </div>
                   )}
                 </div>
 
@@ -599,15 +945,14 @@ export const GenerationCenter: React.FC = () => {
                   <Button
                     variant="primary"
                     size="sm"
-                    icon={isExporting ? undefined : <Download size={12} />}
+                    icon={<Save size={12} />}
                     className="w-full"
-                    onClick={handleExport}
-                    disabled={isExporting}
+                    onClick={handleSaveToProject}
                   >
-                    {isExporting ? '导出中...' : '导出此设计'}
+                    保存生成版本到项目
                   </Button>
                   <p className="text-[10px] text-surface-500 text-center">
-                    将导出 {selectedDesign.width} × {selectedDesign.height} 的 PNG 图片
+                    保存后关闭项目再打开仍能看到
                   </p>
                 </div>
               </>
@@ -623,6 +968,20 @@ export const GenerationCenter: React.FC = () => {
     </Modal>
   );
 };
+
+function estimateFileSize(width: number, height: number, format: string, quality: number): string {
+  const pixels = width * height;
+  let bytes: number;
+  switch (format) {
+    case 'png': bytes = pixels * 4 * 0.7; break;
+    case 'jpeg': bytes = pixels * 3 * quality * 0.3; break;
+    case 'webp': bytes = pixels * 3 * quality * 0.2; break;
+    default: bytes = pixels * 4;
+  }
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 interface SizeGroupProps {
   title: string;
@@ -671,16 +1030,12 @@ const SizeGroup: React.FC<SizeGroupProps> = ({
   );
 };
 
-interface DesignPreviewProps {
-  design: {
-    width: number;
-    height: number;
-    layers: Layer[];
-  };
+interface DesignThumbnailProps {
+  design: GeneratedDesign;
 }
 
-const DesignPreview: React.FC<DesignPreviewProps> = ({ design }) => {
-  const { width, height, layers } = design;
+const DesignThumbnail: React.FC<DesignThumbnailProps> = ({ design }) => {
+  const { width, height, layers, backgroundColor } = design;
 
   const maxSize = 120;
   const scale = Math.min(maxSize / width, maxSize / height);
@@ -691,10 +1046,11 @@ const DesignPreview: React.FC<DesignPreviewProps> = ({ design }) => {
 
   return (
     <div
-      className="relative bg-white shadow-inner"
+      className="relative shadow-inner"
       style={{
         width: displayWidth,
         height: displayHeight,
+        backgroundColor,
       }}
     >
       {sortedLayers.map((layer) => {
@@ -792,19 +1148,31 @@ const DesignPreview: React.FC<DesignPreviewProps> = ({ design }) => {
 };
 
 interface CompareViewProps {
-  design: {
-    id: string;
-    name: string;
-    width: number;
-    height: number;
-    layers: Layer[];
-  };
+  design: GeneratedDesign;
 }
 
 const CompareView: React.FC<CompareViewProps> = ({ design }) => {
   const originalLayers = useLayerStore((s) => s.layers);
   const originalWidth = useCanvasStore((s) => s.width);
   const originalHeight = useCanvasStore((s) => s.height);
+  const originalBg = useCanvasStore((s) => s.backgroundColor);
+
+  const [originalThumb, setOriginalThumb] = useState<string>('');
+  const [designThumb, setDesignThumb] = useState<string>('');
+
+  useEffect(() => {
+    const generateThumbs = async () => {
+      try {
+        const orig = await exportToDataUrl(originalLayers, originalWidth, originalHeight, originalBg, 'png', 0.7);
+        setOriginalThumb(orig);
+      } catch {}
+      try {
+        const des = await exportToDataUrl(design.layers, design.width, design.height, design.backgroundColor, 'png', 0.7);
+        setDesignThumb(des);
+      } catch {}
+    };
+    generateThumbs();
+  }, [design, originalLayers, originalWidth, originalHeight, originalBg]);
 
   return (
     <div className="flex-1 flex flex-col p-4 overflow-hidden">
@@ -820,13 +1188,12 @@ const CompareView: React.FC<CompareViewProps> = ({ design }) => {
             {originalWidth} × {originalHeight}
           </p>
           <div className="p-2 bg-surface-800 rounded-lg border border-surface-700">
-            <div className="w-48 h-48 flex items-center justify-center">
-              <ComparePreview
-                layers={originalLayers}
-                width={originalWidth}
-                height={originalHeight}
-                maxSize={192}
-              />
+            <div className="w-56 h-56 flex items-center justify-center">
+              {originalThumb ? (
+                <img src={originalThumb} alt="" className="max-w-full max-h-full object-contain shadow-md" />
+              ) : (
+                <div className="animate-pulse bg-surface-700 w-full h-full rounded" />
+              )}
             </div>
           </div>
         </div>
@@ -841,13 +1208,12 @@ const CompareView: React.FC<CompareViewProps> = ({ design }) => {
             {design.width} × {design.height}
           </p>
           <div className="p-2 bg-surface-800 rounded-lg border border-brand-500/50">
-            <div className="w-48 h-48 flex items-center justify-center">
-              <ComparePreview
-                layers={design.layers}
-                width={design.width}
-                height={design.height}
-                maxSize={192}
-              />
+            <div className="w-56 h-56 flex items-center justify-center">
+              {designThumb ? (
+                <img src={designThumb} alt="" className="max-w-full max-h-full object-contain shadow-md" />
+              ) : (
+                <div className="animate-pulse bg-surface-700 w-full h-full rounded" />
+              )}
             </div>
           </div>
         </div>
@@ -856,116 +1222,74 @@ const CompareView: React.FC<CompareViewProps> = ({ design }) => {
   );
 };
 
-interface ComparePreviewProps {
-  layers: Layer[];
-  width: number;
-  height: number;
-  maxSize?: number;
+interface ExportResultsViewProps {
+  results: ExportResult[];
+  isExporting: boolean;
+  onBack: () => void;
 }
 
-const ComparePreview: React.FC<ComparePreviewProps> = ({
-  layers,
-  width,
-  height,
-  maxSize = 192,
-}) => {
-  const scale = Math.min(maxSize / width, maxSize / height);
-  const displayWidth = width * scale;
-  const displayHeight = height * scale;
-
-  const sortedLayers = [...layers].sort((a, b) => a.zIndex - b.zIndex);
+const ExportResultsView: React.FC<ExportResultsViewProps> = ({ results, isExporting, onBack }) => {
+  const successCount = results.filter((r) => r.success).length;
+  const failCount = results.filter((r) => !r.success).length;
 
   return (
-    <div
-      className="relative bg-white shadow-inner"
-      style={{
-        width: displayWidth,
-        height: displayHeight,
-      }}
-    >
-      {sortedLayers.map((layer) => {
-        if (!layer.visible) return null;
+    <div className="flex-1 flex flex-col p-4 overflow-hidden">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onBack}
+            className="p-1.5 text-surface-400 hover:text-surface-200 hover:bg-surface-800 rounded"
+          >
+            <ChevronRight size={16} className="rotate-180" />
+          </button>
+          <div>
+            <p className="text-sm font-medium text-surface-200">导出结果</p>
+            <p className="text-xs text-surface-500">
+              {isExporting ? '正在导出...' : `成功 ${successCount} 个，失败 ${failCount} 个`}
+            </p>
+          </div>
+        </div>
+        {isExporting && (
+          <div className="flex items-center gap-2">
+            <DownloadCloud size={16} className="text-brand-400 animate-bounce" />
+            <span className="text-xs text-brand-400">{results.length} 个已处理</span>
+          </div>
+        )}
+      </div>
 
-        const x = (layer.x / width) * 100;
-        const y = (layer.y / height) * 100;
-        const w = (layer.width / width) * 100;
-        const h = (layer.height / height) * 100;
-
-        const baseStyle: React.CSSProperties = {
-          position: 'absolute',
-          left: `${x}%`,
-          top: `${y}%`,
-          width: `${w}%`,
-          height: `${h}%`,
-          opacity: layer.opacity,
-          overflow: 'hidden',
-        };
-
-        if (layer.type === 'text') {
-          return (
-            <div
-              key={layer.id}
-              style={{
-                ...baseStyle,
-                fontSize: `${((layer as any).fontSize / height) * 100}%`,
-                fontFamily: (layer as any).fontFamily,
-                fontWeight: (layer as any).fontWeight,
-                color: (layer as any).color,
-                textAlign: (layer as any).textAlign,
-                lineHeight: (layer as any).lineHeight,
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-              }}
-            >
-              {(layer as any).content}
-            </div>
-          );
-        }
-
-        if (layer.type === 'shape') {
-          let borderRadius: React.CSSProperties['borderRadius'] = 0;
-          if ((layer as any).shapeType === 'circle') borderRadius = '50%';
-          if ((layer as any).shapeType === 'rectangle') borderRadius = (layer as any).borderRadius || 0;
-
-          if ((layer as any).shapeType === 'triangle') {
-            return (
-              <div key={layer.id} style={baseStyle}>
-                <svg viewBox="0 0 100 100" className="w-full h-full" preserveAspectRatio="none">
-                  <polygon points="50,0 100,100 0,100" fill={(layer as any).fill} />
-                </svg>
-              </div>
-            );
-          }
-
-          return (
-            <div
-              key={layer.id}
-              style={{
-                ...baseStyle,
-                backgroundColor: (layer as any).fill,
-                borderRadius,
-                border:
-                  (layer as any).stroke && (layer as any).stroke.width > 0
-                    ? `${((layer as any).stroke.width / width) * 100}% solid ${(layer as any).stroke.color}`
-                    : 'none',
-                boxSizing: 'border-box',
-              }}
-            />
-          );
-        }
-
-        if (layer.type === 'image') {
-          return (
-            <div key={layer.id} style={baseStyle}>
-              <div className="w-full h-full bg-surface-400/30 flex items-center justify-center">
-                <ImageIcon size={16} className="text-surface-500" />
+      <div className="flex-1 overflow-y-auto space-y-2">
+        {results.map((result, index) => (
+          <div
+            key={`${result.designId}-${index}`}
+            className={`flex items-center justify-between p-3 rounded-lg border ${
+              result.success
+                ? 'bg-emerald-500/10 border-emerald-500/30'
+                : 'bg-accent-coral/10 border-accent-coral/30'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              {result.success ? (
+                <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                  <Check size={14} className="text-emerald-400" />
+                </div>
+              ) : (
+                <div className="w-8 h-8 rounded-full bg-accent-coral/20 flex items-center justify-center">
+                  <X size={14} className="text-accent-coral" />
+                </div>
+              )}
+              <div>
+                <p className="text-sm font-medium text-surface-200">{result.name}</p>
+                <p className="text-xs text-surface-500">
+                  {result.success ? result.size : result.error}
+                </p>
               </div>
             </div>
-          );
-        }
-
-        return null;
-      })}
+            {result.success && (
+              <span className="text-[10px] text-emerald-400 font-medium">已下载</span>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 };

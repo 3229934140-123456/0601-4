@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Project, VersionSnapshot, ColorPalette, GeneratedDesign } from '@/types/project';
+import type { Project, VersionSnapshot, ColorPalette, GeneratedDesign, SaveRecord } from '@/types/project';
 import type { Layer } from '@/types/layer';
 import type { CanvasState } from '@/types/canvas';
 import { colorPalettes, favoriteColors as defaultFavorites } from '@/data/colorPalettes';
@@ -17,6 +17,7 @@ interface ProjectStore {
   showGenerationCenter: boolean;
   generatedDesigns: GeneratedDesign[];
   selectedGeneratedDesignId: string | null;
+  selectedDesignIds: string[];
   isDirty: boolean;
   savedLayers: Layer[] | null;
   savedCanvas: CanvasState | null;
@@ -30,13 +31,17 @@ interface ProjectStore {
 
   createNewProject: (name: string, width: number, height: number) => string;
   createProjectFromTemplate: (templateId: string) => string;
-  saveProject: () => void;
+  saveProject: (type?: 'auto' | 'manual') => void;
   loadProject: (id: string) => void;
   deleteProject: (id: string) => void;
   archiveProject: (id: string) => void;
   unarchiveProject: (id: string) => void;
   renameProject: (id: string, name: string) => void;
   toggleStarProject: (id: string) => void;
+  setProjectTags: (id: string, tags: string[]) => void;
+  setProjectFolder: (id: string, folder: string | undefined) => void;
+  getAllFolders: () => string[];
+  getAllTags: () => string[];
 
   saveSnapshot: (name: string) => void;
   restoreSnapshot: (snapshotId: string) => void;
@@ -51,6 +56,9 @@ interface ProjectStore {
 
   generateDesigns: (sizeIds: string[]) => void;
   selectGeneratedDesign: (id: string | null) => void;
+  toggleSelectDesign: (id: string) => void;
+  selectAllDesigns: () => void;
+  deselectAllDesigns: () => void;
   updateGeneratedDesign: (id: string, updates: Partial<GeneratedDesign>) => void;
   deleteGeneratedDesign: (id: string) => void;
   applyGeneratedDesignToCanvas: (id: string) => void;
@@ -59,8 +67,10 @@ interface ProjectStore {
   duplicateGeneratedDesign: (id: string) => void;
   selectGeneratedDesignLayer: (designId: string, layerId: string | null) => void;
   updateGeneratedDesignLayer: (designId: string, layerId: string, updates: Partial<Layer>) => void;
+  saveGeneratedDesignsToProject: () => void;
 
   getCurrentProject: () => Project | null;
+  getLastSaveRecord: () => SaveRecord | null;
 }
 
 const generateId = () => `proj-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -141,6 +151,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   showGenerationCenter: false,
   generatedDesigns: [],
   selectedGeneratedDesignId: null,
+  selectedDesignIds: [],
   isDirty: false,
   savedLayers: null,
   savedCanvas: null,
@@ -191,6 +202,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const newProject: Project = {
       id: generateId(),
       name,
+      tags: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
       canvas: {
@@ -206,12 +218,21 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         snapToObjects: true,
       },
       layers: [],
+      generatedDesigns: [],
+      saveRecords: [],
       archived: false,
       starred: false,
     };
     const newProjects = [newProject, ...projects];
     saveToStorage(newProjects);
-    set({ projects: newProjects, currentProjectId: newProject.id, versionSnapshots: [], isDirty: false });
+    set({
+      projects: newProjects,
+      currentProjectId: newProject.id,
+      versionSnapshots: [],
+      generatedDesigns: [],
+      selectedDesignIds: [],
+      isDirty: false,
+    });
     return newProject.id;
   },
 
@@ -229,6 +250,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       id: generateId(),
       name: template.name,
       thumbnail: template.thumbnail,
+      tags: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
       canvas: {
@@ -244,33 +266,50 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         snapToObjects: true,
       },
       layers: layers as Layer[],
+      generatedDesigns: [],
+      saveRecords: [],
       archived: false,
       starred: false,
     };
 
     const newProjects = [newProject, ...projects];
     saveToStorage(newProjects);
-    set({ projects: newProjects, currentProjectId: newProject.id, versionSnapshots: [], isDirty: false });
+    set({
+      projects: newProjects,
+      currentProjectId: newProject.id,
+      versionSnapshots: [],
+      generatedDesigns: [],
+      selectedDesignIds: [],
+      isDirty: false,
+    });
     return newProject.id;
   },
 
-  saveProject: () => {
-    const { currentProjectId, projects, updateSavedState } = get();
+  saveProject: (type = 'manual') => {
+    const { currentProjectId, projects, generatedDesigns, updateSavedState } = get();
     if (!currentProjectId) return;
 
     const canvasState = (window as any).__canvasState;
     const layersState = (window as any).__layersState;
 
-    const updatedProjects = projects.map((p) =>
-      p.id === currentProjectId
-        ? {
-            ...p,
-            updatedAt: Date.now(),
-            canvas: canvasState || p.canvas,
-            layers: layersState || p.layers,
-          }
-        : p
-    );
+    const newRecord = {
+      id: `save-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      timestamp: Date.now(),
+      type,
+    };
+
+    const updatedProjects = projects.map((p) => {
+      if (p.id !== currentProjectId) return p;
+      const saveRecords = [...(p.saveRecords || []), newRecord].slice(-10);
+      return {
+        ...p,
+        updatedAt: Date.now(),
+        canvas: canvasState || p.canvas,
+        layers: layersState || p.layers,
+        generatedDesigns: generatedDesigns || p.generatedDesigns || [],
+        saveRecords,
+      };
+    });
 
     saveToStorage(updatedProjects);
     set({ projects: updatedProjects });
@@ -285,7 +324,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         p.id === id ? { ...p, lastOpenedAt: Date.now() } : p
       );
       saveToStorage(updatedProjects);
-      set({ currentProjectId: id, versionSnapshots: [], projects: updatedProjects, isDirty: false });
+      set({
+        currentProjectId: id,
+        versionSnapshots: [],
+        projects: updatedProjects,
+        isDirty: false,
+        generatedDesigns: project.generatedDesigns || [],
+        selectedDesignIds: [],
+        selectedGeneratedDesignId: (project.generatedDesigns || []).length > 0
+          ? project.generatedDesigns![0].id
+          : null,
+      });
     }
   },
 
@@ -333,6 +382,42 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     );
     saveToStorage(newProjects);
     set({ projects: newProjects });
+  },
+
+  setProjectTags: (id, tags) => {
+    const { projects } = get();
+    const newProjects = projects.map((p) =>
+      p.id === id ? { ...p, tags, updatedAt: Date.now() } : p
+    );
+    saveToStorage(newProjects);
+    set({ projects: newProjects });
+  },
+
+  setProjectFolder: (id, folder) => {
+    const { projects } = get();
+    const newProjects = projects.map((p) =>
+      p.id === id ? { ...p, folder, updatedAt: Date.now() } : p
+    );
+    saveToStorage(newProjects);
+    set({ projects: newProjects });
+  },
+
+  getAllFolders: () => {
+    const { projects } = get();
+    const folders = new Set<string>();
+    projects.forEach((p) => {
+      if (p.folder) folders.add(p.folder);
+    });
+    return Array.from(folders).sort();
+  },
+
+  getAllTags: () => {
+    const { projects } = get();
+    const tags = new Set<string>();
+    projects.forEach((p) => {
+      p.tags?.forEach((t) => tags.add(t));
+    });
+    return Array.from(tags).sort();
   },
 
   saveSnapshot: (name) => {
@@ -464,6 +549,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         sizeId: size.id,
         width: size.width,
         height: size.height,
+        backgroundColor: canvasState.backgroundColor,
         layers: scaledLayers,
         selectedLayerId: null,
         createdAt: Date.now(),
@@ -474,11 +560,32 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({
       generatedDesigns: newDesigns,
       selectedGeneratedDesignId: newDesigns.length > 0 ? newDesigns[0].id : null,
+      selectedDesignIds: newDesigns.map((d) => d.id),
     });
   },
 
   selectGeneratedDesign: (id) => {
     set({ selectedGeneratedDesignId: id });
+  },
+
+  toggleSelectDesign: (id) => {
+    const { selectedDesignIds } = get();
+    const newSelected = selectedDesignIds.includes(id)
+      ? selectedDesignIds.filter((i) => i !== id)
+      : [...selectedDesignIds, id];
+    set({
+      selectedDesignIds: newSelected,
+      selectedGeneratedDesignId: newSelected.length > 0 ? id : null,
+    });
+  },
+
+  selectAllDesigns: () => {
+    const { generatedDesigns } = get();
+    set({ selectedDesignIds: generatedDesigns.map((d) => d.id) });
+  },
+
+  deselectAllDesigns: () => {
+    set({ selectedDesignIds: [] });
   },
 
   updateGeneratedDesign: (id, updates) => {
@@ -490,10 +597,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   deleteGeneratedDesign: (id) => {
-    const { generatedDesigns, selectedGeneratedDesignId } = get();
+    const { generatedDesigns, selectedGeneratedDesignId, selectedDesignIds } = get();
     const newDesigns = generatedDesigns.filter((d) => d.id !== id);
+    const newSelectedIds = selectedDesignIds.filter((i) => i !== id);
     set({
       generatedDesigns: newDesigns,
+      selectedDesignIds: newSelectedIds,
       selectedGeneratedDesignId:
         selectedGeneratedDesignId === id
           ? newDesigns.length > 0
@@ -515,6 +624,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     if (canvasStore && canvasStore.setSize) {
       canvasStore.setSize(design.width, design.height);
     }
+    if (canvasStore && canvasStore.setBackgroundColor) {
+      canvasStore.setBackgroundColor(design.backgroundColor);
+    }
   },
 
   saveGeneratedDesignAsSnapshot: (id, name) => {
@@ -530,6 +642,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       ...tempCanvas,
       width: design.width,
       height: design.height,
+      backgroundColor: design.backgroundColor,
     };
 
     saveSnapshot(name);
@@ -539,7 +652,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   clearGeneratedDesigns: () => {
-    set({ generatedDesigns: [], selectedGeneratedDesignId: null });
+    set({ generatedDesigns: [], selectedGeneratedDesignId: null, selectedDesignIds: [] });
   },
 
   duplicateGeneratedDesign: (id) => {
@@ -553,6 +666,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       name: `${design.name} 副本`,
       layers: JSON.parse(JSON.stringify(design.layers)),
       selectedLayerId: null,
+      parentId: design.id,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -561,6 +675,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({
       generatedDesigns: newDesigns,
       selectedGeneratedDesignId: newDesign.id,
+      selectedDesignIds: [...new Set([...newDesigns.map((d) => d.id), newDesign.id])],
     });
   },
 
@@ -584,9 +699,21 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({ generatedDesigns: updatedDesigns });
   },
 
+  saveGeneratedDesignsToProject: () => {
+    const { saveProject } = get();
+    saveProject('manual');
+  },
+
   getCurrentProject: () => {
     const { currentProjectId, projects } = get();
     return projects.find((p) => p.id === currentProjectId) || null;
+  },
+
+  getLastSaveRecord: () => {
+    const { currentProjectId, projects } = get();
+    const project = projects.find((p) => p.id === currentProjectId);
+    if (!project?.saveRecords || project.saveRecords.length === 0) return null;
+    return project.saveRecords[project.saveRecords.length - 1];
   },
 }));
 

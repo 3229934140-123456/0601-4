@@ -7,22 +7,34 @@ export interface GeneratedDesign {
   sizeId: string;
   width: number;
   height: number;
+  backgroundColor: string;
   layers: Layer[];
   thumbnail?: string;
   note?: string;
   selectedLayerId: string | null;
+  parentId?: string;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface SaveRecord {
+  id: string;
+  timestamp: number;
+  type: 'auto' | 'manual';
 }
 
 export interface Project {
   id: string;
   name: string;
   thumbnail?: string;
+  tags: string[];
+  folder?: string;
   createdAt: number;
   updatedAt: number;
   canvas: CanvasState;
   layers: Layer[];
+  generatedDesigns: GeneratedDesign[];
+  saveRecords: SaveRecord[];
   archived: boolean;
   starred: boolean;
   lastOpenedAt?: number;

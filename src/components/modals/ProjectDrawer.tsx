@@ -12,6 +12,13 @@ import {
   Replace,
   Star,
   History,
+  Tag,
+  FolderOpen,
+  ChevronDown,
+  ChevronRight,
+  Settings,
+  Edit3,
+  Check,
 } from 'lucide-react';
 import { useProjectStore } from '@/store/projectStore';
 import { useCanvasStore } from '@/store/canvasStore';
@@ -19,6 +26,8 @@ import { useLayerStore } from '@/store/layerStore';
 import { formatDate } from '@/utils/canvas';
 import type { Layer } from '@/types/layer';
 import { Button } from '@/components/common/Button';
+
+type FilterType = 'active' | 'starred' | 'recent' | 'archived';
 
 export const ProjectDrawer: React.FC = () => {
   const {
@@ -39,14 +48,34 @@ export const ProjectDrawer: React.FC = () => {
     countMatchingTextLayers,
     updateSavedState,
     toggleStarProject,
+    setProjectTags,
+    setProjectFolder,
+    getAllFolders,
+    getAllTags,
+    getCurrentProject,
   } = useProjectStore();
   const { setSize, setBackgroundColor } = useCanvasStore();
   const { setLayers } = useLayerStore();
   const [searchQuery, setSearchQuery] = useState('');
-  const [filter, setFilter] = useState<'all' | 'active' | 'archived' | 'starred' | 'recent'>('active');
+  const [filter, setFilter] = useState<FilterType>('active');
   const [showBatchReplace, setShowBatchReplace] = useState(false);
   const [findText, setFindText] = useState('');
   const [replaceText, setReplaceText] = useState('');
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [showFolderMenu, setShowFolderMenu] = useState(false);
+  const [showTagMenu, setShowTagMenu] = useState(false);
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
+  const [newFolderName, setNewFolderName] = useState('');
+  const [newTagName, setNewTagName] = useState('');
+  const [showNewFolder, setShowNewFolder] = useState(false);
+  const [showNewTag, setShowNewTag] = useState(false);
+  const [showSaveRecords, setShowSaveRecords] = useState(false);
+
+  const allFolders = getAllFolders();
+  const allTags = getAllTags();
+  const currentProject = getCurrentProject();
 
   const matchCount = useMemo(() => {
     if (!findText) return 0;
@@ -58,7 +87,19 @@ export const ProjectDrawer: React.FC = () => {
 
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
-      result = result.filter((p) => p.name.toLowerCase().includes(query));
+      result = result.filter((p) => {
+        const nameMatch = p.name.toLowerCase().includes(query);
+        const tagMatch = p.tags?.some((t) => t.toLowerCase().includes(query));
+        return nameMatch || tagMatch;
+      });
+    }
+
+    if (selectedFolder) {
+      result = result.filter((p) => p.folder === selectedFolder);
+    }
+
+    if (selectedTag) {
+      result = result.filter((p) => p.tags?.includes(selectedTag));
     }
 
     switch (filter) {
@@ -76,8 +117,6 @@ export const ProjectDrawer: React.FC = () => {
           .filter((p) => p.lastOpenedAt && !p.archived)
           .sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0));
         break;
-      default:
-        break;
     }
 
     if (filter !== 'recent') {
@@ -88,7 +127,7 @@ export const ProjectDrawer: React.FC = () => {
     }
 
     return result;
-  }, [projects, searchQuery, filter]);
+  }, [projects, searchQuery, filter, selectedFolder, selectedTag]);
 
   const handleLoadProject = (id: string) => {
     const project = projects.find((p) => p.id === id);
@@ -126,6 +165,62 @@ export const ProjectDrawer: React.FC = () => {
     setReplaceText('');
   };
 
+  const handleStartRename = (project: any) => {
+    setEditingProjectId(project.id);
+    setEditingName(project.name);
+  };
+
+  const handleSaveRename = () => {
+    if (editingProjectId && editingName.trim()) {
+      renameProject(editingProjectId, editingName.trim());
+    }
+    setEditingProjectId(null);
+  };
+
+  const handleAddTag = (projectId: string, tag: string) => {
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) return;
+    const newTags = [...(project.tags || []), tag];
+    setProjectTags(projectId, newTags);
+    setShowTagMenu(false);
+  };
+
+  const handleRemoveTag = (projectId: string, tag: string) => {
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) return;
+    const newTags = (project.tags || []).filter((t) => t !== tag);
+    setProjectTags(projectId, newTags);
+  };
+
+  const handleSetFolder = (projectId: string, folder: string | undefined) => {
+    setProjectFolder(projectId, folder);
+    setShowFolderMenu(false);
+  };
+
+  const handleCreateFolder = () => {
+    if (newFolderName.trim()) {
+      if (currentProjectId) {
+        setProjectFolder(currentProjectId, newFolderName.trim());
+      }
+      setNewFolderName('');
+      setShowNewFolder(false);
+    }
+  };
+
+  const handleCreateTag = () => {
+    if (newTagName.trim()) {
+      if (currentProjectId) {
+        const project = projects.find((p) => p.id === currentProjectId);
+        if (project) {
+          const newTags = [...(project.tags || []), newTagName.trim()];
+          setProjectTags(currentProjectId, newTags);
+        }
+      }
+      setNewTagName('');
+      setShowNewTag(false);
+    }
+  };
+
   if (!showProjectPanel) return null;
 
   return (
@@ -135,7 +230,7 @@ export const ProjectDrawer: React.FC = () => {
         onClick={() => setShowProjectPanel(false)}
       />
 
-      <div className="relative z-10 w-96 h-full bg-surface-900 border-r border-surface-700 shadow-2xl flex flex-col animate-in slide-in-from-left duration-300">
+      <div className="relative z-10 w-[420px] h-full bg-surface-900 border-r border-surface-700 shadow-2xl flex flex-col animate-in slide-in-from-left duration-300">
         <div className="flex items-center justify-between p-4 border-b border-surface-700">
           <h2 className="text-base font-semibold text-surface-100 font-display">
             项目管理
@@ -221,7 +316,7 @@ export const ProjectDrawer: React.FC = () => {
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-surface-500" />
             <input
               type="text"
-              placeholder="搜索项目..."
+              placeholder="搜索项目名或标签..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-8 pr-3 py-2 text-sm bg-surface-800 border border-surface-700 rounded-md text-surface-200 placeholder-surface-500 focus:outline-none focus:border-brand-500"
@@ -237,9 +332,13 @@ export const ProjectDrawer: React.FC = () => {
             ] as const).map((f) => (
               <button
                 key={f.key}
-                onClick={() => setFilter(f.key)}
+                onClick={() => {
+                  setFilter(f.key);
+                  setSelectedFolder(null);
+                  setSelectedTag(null);
+                }}
                 className={`flex items-center gap-1 px-2 py-1.5 text-xs rounded-md transition-colors ${
-                  filter === f.key
+                  filter === f.key && !selectedFolder && !selectedTag
                     ? 'bg-surface-700 text-surface-200'
                     : 'text-surface-500 hover:text-surface-300'
                 }`}
@@ -249,12 +348,204 @@ export const ProjectDrawer: React.FC = () => {
               </button>
             ))}
           </div>
+
+          <div className="flex gap-2 flex-wrap">
+            {allFolders.length > 0 && (
+              <div className="relative">
+                <button
+                  onClick={() => {
+                    setShowFolderMenu(!showFolderMenu);
+                    setShowTagMenu(false);
+                  }}
+                  className={`flex items-center gap-1 px-2 py-1 text-xs rounded-md transition-colors ${
+                    selectedFolder
+                      ? 'bg-brand-500/20 text-brand-400'
+                      : 'bg-surface-800 text-surface-400 hover:text-surface-200'
+                  }`}
+                >
+                  <Folder size={11} />
+                  <span className="max-w-[80px] truncate">
+                    {selectedFolder || '文件夹'}
+                  </span>
+                  <ChevronDown size={10} />
+                </button>
+                {showFolderMenu && (
+                  <div className="absolute top-full left-0 mt-1 w-40 bg-surface-800 border border-surface-700 rounded-md shadow-xl z-50 py-1 max-h-48 overflow-y-auto">
+                    <button
+                      onClick={() => {
+                        setSelectedFolder(null);
+                        setShowFolderMenu(false);
+                      }}
+                      className={`w-full px-3 py-1.5 text-left text-xs transition-colors ${
+                        !selectedFolder
+                          ? 'bg-brand-500/10 text-brand-400'
+                          : 'text-surface-300 hover:bg-surface-700'
+                      }`}
+                    >
+                      全部文件夹
+                    </button>
+                    {allFolders.map((folder) => (
+                      <button
+                        key={folder}
+                        onClick={() => {
+                          setSelectedFolder(folder);
+                          setShowFolderMenu(false);
+                        }}
+                        className={`w-full px-3 py-1.5 text-left text-xs transition-colors flex items-center gap-2 ${
+                          selectedFolder === folder
+                            ? 'bg-brand-500/10 text-brand-400'
+                            : 'text-surface-300 hover:bg-surface-700'
+                        }`}
+                      >
+                        <Folder size={11} />
+                        <span className="truncate">{folder}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {allTags.length > 0 && (
+              <div className="relative">
+                <button
+                  onClick={() => {
+                    setShowTagMenu(!showTagMenu);
+                    setShowFolderMenu(false);
+                  }}
+                  className={`flex items-center gap-1 px-2 py-1 text-xs rounded-md transition-colors ${
+                    selectedTag
+                      ? 'bg-accent-magenta/20 text-accent-magenta'
+                      : 'bg-surface-800 text-surface-400 hover:text-surface-200'
+                  }`}
+                >
+                  <Tag size={11} />
+                  <span className="max-w-[80px] truncate">
+                    {selectedTag || '标签'}
+                  </span>
+                  <ChevronDown size={10} />
+                </button>
+                {showTagMenu && (
+                  <div className="absolute top-full left-0 mt-1 w-40 bg-surface-800 border border-surface-700 rounded-md shadow-xl z-50 py-1 max-h-48 overflow-y-auto">
+                    <button
+                      onClick={() => {
+                        setSelectedTag(null);
+                        setShowTagMenu(false);
+                      }}
+                      className={`w-full px-3 py-1.5 text-left text-xs transition-colors ${
+                        !selectedTag
+                          ? 'bg-brand-500/10 text-brand-400'
+                          : 'text-surface-300 hover:bg-surface-700'
+                      }`}
+                    >
+                      全部标签
+                    </button>
+                    {allTags.map((tag) => (
+                      <button
+                        key={tag}
+                        onClick={() => {
+                          setSelectedTag(tag);
+                          setShowTagMenu(false);
+                        }}
+                        className={`w-full px-3 py-1.5 text-left text-xs transition-colors flex items-center gap-2 ${
+                          selectedTag === tag
+                            ? 'bg-brand-500/10 text-brand-400'
+                            : 'text-surface-300 hover:bg-surface-700'
+                        }`}
+                      >
+                        <Tag size={11} />
+                        <span className="truncate">{tag}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {(selectedFolder || selectedTag) && (
+              <button
+                onClick={() => {
+                  setSelectedFolder(null);
+                  setSelectedTag(null);
+                }}
+                className="flex items-center gap-1 px-2 py-1 text-xs text-surface-500 hover:text-surface-300 rounded-md transition-colors"
+              >
+                <X size={11} />
+                清除筛选
+              </button>
+            )}
+          </div>
         </div>
+
+        {currentProjectId && (
+          <div className="p-3 border-b border-surface-700 space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-semibold text-surface-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Clock size={12} />
+                当前项目
+              </h3>
+              <button
+                onClick={() => setShowSaveRecords(!showSaveRecords)}
+                className="text-[10px] text-surface-500 hover:text-surface-300"
+              >
+                {showSaveRecords ? '收起' : '保存记录'}
+              </button>
+            </div>
+            
+            {currentProject && (
+              <div className="p-2 bg-surface-800 rounded-md">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-surface-200 truncate flex-1">
+                    {currentProject.name}
+                  </span>
+                  {currentProject.starred && (
+                    <Star size={12} className="text-amber-400 fill-amber-400 flex-shrink-0" />
+                  )}
+                </div>
+                {currentProject.tags && currentProject.tags.length > 0 && (
+                  <div className="flex gap-1 mt-2 flex-wrap">
+                    {currentProject.tags.slice(0, 3).map((tag) => (
+                      <span
+                        key={tag}
+                        className="px-1.5 py-0.5 text-[10px] bg-surface-700 text-surface-400 rounded flex items-center gap-1"
+                      >
+                        <Tag size={8} />
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                
+                {showSaveRecords && currentProject.saveRecords && currentProject.saveRecords.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-surface-700 space-y-1">
+                    <p className="text-[10px] text-surface-500">最近保存：</p>
+                    {currentProject.saveRecords.slice(-5).reverse().map((record) => (
+                      <div
+                        key={record.id}
+                        className="flex items-center gap-2 text-[10px] text-surface-400"
+                      >
+                        {record.type === 'auto' ? (
+                          <RefreshCw size={9} className="text-accent-cyan" />
+                        ) : (
+                          <Save size={9} className="text-emerald-400" />
+                        )}
+                        <span>{record.type === 'auto' ? '自动保存' : '手动保存'}</span>
+                        <span className="ml-auto font-mono">
+                          {new Date(record.timestamp).toLocaleTimeString()}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {currentProjectId && versionSnapshots.length > 0 && (
           <div className="p-3 border-b border-surface-700">
             <h3 className="text-xs font-semibold text-surface-400 mb-2 uppercase tracking-wider flex items-center gap-1.5">
-              <Clock size={12} />
+              <History size={12} />
               版本快照
             </h3>
             <div className="space-y-1.5 max-h-32 overflow-y-auto">
@@ -336,17 +627,55 @@ export const ProjectDrawer: React.FC = () => {
                             <Star size={10} className="text-amber-400 fill-amber-400" />
                           </div>
                         )}
+                        {project.folder && (
+                          <div className="absolute bottom-0.5 right-0.5">
+                            <div className="px-1 py-0.5 bg-surface-900/80 rounded text-[8px] text-surface-400 flex items-center gap-0.5">
+                              <Folder size={7} />
+                              {project.folder}
+                            </div>
+                          </div>
+                        )}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-surface-200 truncate flex items-center gap-1">
-                          {project.name}
-                          {project.starred && (
-                            <Star size={10} className="text-amber-400 fill-amber-400 flex-shrink-0" />
-                          )}
-                        </p>
+                        {editingProjectId === project.id ? (
+                          <input
+                            type="text"
+                            value={editingName}
+                            onChange={(e) => setEditingName(e.target.value)}
+                            onBlur={handleSaveRename}
+                            onKeyDown={(e) => e.key === 'Enter' && handleSaveRename()}
+                            autoFocus
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-full px-2 py-0.5 text-sm bg-surface-900 border border-surface-600 rounded text-surface-200 focus:outline-none focus:border-brand-500"
+                          />
+                        ) : (
+                          <p className="text-sm font-medium text-surface-200 truncate flex items-center gap-1">
+                            {project.name}
+                            {project.starred && (
+                              <Star size={10} className="text-amber-400 fill-amber-400 flex-shrink-0" />
+                            )}
+                          </p>
+                        )}
                         <p className="text-xs text-surface-500 mt-0.5">
                           {project.canvas.width} × {project.canvas.height}
                         </p>
+                        {project.tags && project.tags.length > 0 && (
+                          <div className="flex gap-1 mt-1 flex-wrap">
+                            {project.tags.slice(0, 2).map((tag) => (
+                              <span
+                                key={tag}
+                                className="px-1.5 py-0.5 text-[9px] bg-surface-700/50 text-surface-400 rounded"
+                              >
+                                {tag}
+                              </span>
+                            ))}
+                            {project.tags.length > 2 && (
+                              <span className="text-[9px] text-surface-500">
+                                +{project.tags.length - 2}
+                              </span>
+                            )}
+                          </div>
+                        )}
                         <p className="text-[10px] text-surface-600 mt-0.5">
                           更新于 {formatDate(project.updatedAt)}
                         </p>
@@ -365,6 +694,16 @@ export const ProjectDrawer: React.FC = () => {
                           title={project.starred ? '取消星标' : '加星标'}
                         >
                           <Star size={13} className={project.starred ? 'fill-amber-400' : ''} />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleStartRename(project);
+                          }}
+                          className="p-1 text-surface-400 hover:text-surface-200 rounded"
+                          title="重命名"
+                        >
+                          <Edit3 size={13} />
                         </button>
                         {project.archived ? (
                           <button
@@ -411,8 +750,32 @@ export const ProjectDrawer: React.FC = () => {
 
         <div className="p-3 border-t border-surface-700 text-xs text-surface-500 text-center">
           共 {projects.filter((p) => !p.archived).length} 个进行中项目
+          {selectedFolder && ` · 文件夹: ${selectedFolder}`}
+          {selectedTag && ` · 标签: ${selectedTag}`}
         </div>
       </div>
     </div>
   );
 };
+
+function RefreshCw({ size, className }: { size: number; className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+      <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+      <path d="M16 16h5v5" />
+    </svg>
+  );
+}
